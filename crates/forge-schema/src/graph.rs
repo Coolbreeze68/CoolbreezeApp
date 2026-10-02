@@ -1,15 +1,13 @@
-//! Graphe de dépendances entre colonnes calculées.
+//! Tri topologique et détection de cycles (colonnes calculées, références obligatoires).
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::ColumnRef;
-
 /// Résultat du tri : ordre topologique et cycles détectés.
-#[derive(Debug, Default)]
-pub(crate) struct Sorted {
-    pub order: Vec<ColumnRef>,
+#[derive(Debug)]
+pub(crate) struct Sorted<T> {
+    pub order: Vec<T>,
     /// Chaque cycle est donné dans l'ordre des dépendances, en revenant au point de départ.
-    pub cycles: Vec<Vec<ColumnRef>>,
+    pub cycles: Vec<Vec<T>>,
 }
 
 /// Trie les nœuds pour que chacun vienne après ses dépendances.
@@ -17,26 +15,25 @@ pub(crate) struct Sorted {
 /// Seuls les nœuds présents comme clés sont ordonnés ; les dépendances vers des
 /// colonnes non calculées sont ignorées. Le parcours suit l'ordre des clés pour
 /// rester déterministe.
-pub(crate) fn sort(edges: &BTreeMap<ColumnRef, BTreeSet<ColumnRef>>) -> Sorted {
+pub(crate) fn sort<T: Ord + Clone>(edges: &BTreeMap<T, BTreeSet<T>>) -> Sorted<T> {
     #[derive(Clone, Copy, PartialEq)]
     enum State {
         InProgress,
         Done,
     }
 
-    fn visit<'a>(
-        node: &'a ColumnRef,
-        edges: &'a BTreeMap<ColumnRef, BTreeSet<ColumnRef>>,
-        states: &mut BTreeMap<&'a ColumnRef, State>,
-        stack: &mut Vec<&'a ColumnRef>,
-        sorted: &mut Sorted,
+    fn visit<'a, T: Ord + Clone>(
+        node: &'a T,
+        edges: &'a BTreeMap<T, BTreeSet<T>>,
+        states: &mut BTreeMap<&'a T, State>,
+        stack: &mut Vec<&'a T>,
+        sorted: &mut Sorted<T>,
     ) {
         match states.get(node) {
             Some(State::Done) => return,
             Some(State::InProgress) => {
                 let start = stack.iter().position(|n| *n == node).unwrap_or(0);
-                let mut cycle: Vec<ColumnRef> =
-                    stack[start..].iter().map(|n| (*n).clone()).collect();
+                let mut cycle: Vec<T> = stack[start..].iter().map(|n| (*n).clone()).collect();
                 cycle.push(node.clone());
                 sorted.cycles.push(cycle);
                 return;
@@ -54,7 +51,10 @@ pub(crate) fn sort(edges: &BTreeMap<ColumnRef, BTreeSet<ColumnRef>>) -> Sorted {
     }
 
     let mut states = BTreeMap::new();
-    let mut sorted = Sorted::default();
+    let mut sorted = Sorted {
+        order: Vec::new(),
+        cycles: Vec::new(),
+    };
     for node in edges.keys() {
         visit(node, edges, &mut states, &mut Vec::new(), &mut sorted);
     }
@@ -64,6 +64,7 @@ pub(crate) fn sort(edges: &BTreeMap<ColumnRef, BTreeSet<ColumnRef>>) -> Sorted {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ColumnRef;
 
     fn col(name: &str) -> ColumnRef {
         ColumnRef::new("t", name)

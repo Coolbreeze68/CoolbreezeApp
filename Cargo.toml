@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "examples/crm/backend"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,18 +10,46 @@ repository = "https://github.com/coolbreeze68/coolbreezeapp"
 rust-version = "1.85"
 
 [workspace.dependencies]
+forge-codegen = { path = "crates/forge-codegen" }
 forge-formula = { path = "crates/forge-formula" }
+forge-runtime = { path = "crates/forge-runtime" }
 forge-schema = { path = "crates/forge-schema" }
 
 anyhow = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-clap = { version = "4", features = ["derive"] }
+axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+http-body-util = "0.1"
+minijinja = "2"
 rust_decimal = "1"
 schemars = "1"
+sea-orm = { version = "2", default-features = false, features = [
+    "macros",
+    "runtime-tokio-rustls",
+    "sqlx-mysql",
+    "sqlx-postgres",
+    "sqlx-sqlite",
+    "with-chrono",
+    "with-json",
+    "with-rust_decimal",
+] }
+sea-orm-migration = { version = "2", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlx-mysql",
+    "sqlx-postgres",
+    "sqlx-sqlite",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
+serde_urlencoded = "0.7"
+tempfile = "3"
+toml = "1"
 thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

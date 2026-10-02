@@ -16,7 +16,7 @@ n'est jamais écrasé par une régénération.
 | Phase | Contenu | État |
 |---|---|---|
 | 0 | Workspace, `forge-schema`, parser de formules, JSON Schema, `forge validate` | ✅ |
-| 1 | Backend minimal : entités, migrations, CRUD REST, `parameters` | à venir |
+| 1 | Backend : entités, migration initiale, CRUD REST (pagination, tri, filtres), `parameters`, hooks, routes personnalisées ; SQLite, PostgreSQL, MySQL | ✅ |
 | 2 | Migrations incrémentales | à venir |
 | 3 | Auth, rôles, moteur de règles | à venir |
 | 4 | Évaluation des formules, lookups, `persist`, agrégats | à venir |
@@ -25,7 +25,10 @@ n'est jamais écrasé par une régénération.
 | 7 | Application Flutter | à venir |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Seules les commandes listées ci-dessous existent aujourd'hui.
+Ce qui n'est **pas encore** disponible (phases suivantes) : modifier la structure
+d'un schéma déjà migré, l'authentification (`owner` reste vide), les règles
+d'autorisation, le calcul des formules et des lookups (absents des réponses), GraphQL,
+CSV, OpenAPI, l'application Flutter et Docker.
 
 ## Installation
 
@@ -34,22 +37,197 @@ cargo install --path crates/forge-cli
 forge --help
 ```
 
+Les projets générés dépendent de `forge-runtime` par chemin : le binaire `forge`
+pointe vers les sources à partir desquelles il a été compilé (option `--runtime-path`
+pour en choisir d'autres).
+
 ## Commandes
 
 | Commande | Rôle |
 |---|---|
-| `forge validate [schema.json]` | Valide un schéma (défaut : `forge.json`) et liste **toutes** les erreurs avec leur chemin. Code de sortie 1 en cas d'erreur. |
+| `forge new <dir> --schema <fichier>` | Crée un projet : copie le schéma dans `<dir>/forge.json` et génère le code. |
+| `forge generate [--dir .]` | Régénère le code à partir de `forge.json`. Idempotent : sans modification du schéma, aucun fichier ne change. |
+| `forge migrate [up\|down\|status] [--dir .]` | Applique, annule ou liste les migrations (`cargo run -- migrate …` dans `backend/`). |
+| `forge validate [schema.json]` | Valide un schéma (défaut : `forge.json`) et liste **toutes** les erreurs avec leur chemin. |
 | `forge schema` | Affiche le JSON Schema du format d'entrée (contenu de `forge.schema.json`). |
 
-Exemple de sortie :
+Exemple de sortie de `forge validate` :
 
 ```text
-$ forge validate schema.json
 schema.json : 3 erreur(s)
   - tables[2].columns[6].formula: `probabilit` n'est ni une colonne ni une relation de la table `opportunite` (position 10)
   - tables[2].rules[2].roles[0]: rôle `vendeur` non déclaré dans `roles`
   - tables[2].columns[13].formula: dépendance circulaire : opportunite.boucle → opportunite.boucle
 ```
+
+## Tutoriel : un mini CRM
+
+Le schéma de référence [`examples/crm/forge.json`](examples/crm/forge.json) décrit
+cinq tables : `entreprise`, `contact`, `opportunite`, `activite` et `tag`.
+Le projet généré correspondant est versionné dans [`examples/crm/`](examples/crm).
+
+### 1. Créer le projet
+
+```bash
+forge new crm --schema examples/crm/forge.json
+```
+
+```text
+crm/
+├── forge.json                 # votre schéma : la source de vérité
+├── .forge/snapshot.json       # structure de stockage à la dernière migration
+└── backend/
+    ├── Cargo.toml             # à vous (créé une fois)
+    ├── src/main.rs, lib.rs    # à vous (créés une fois)
+    ├── src/generated/         # NE PAS MODIFIER : réécrit à chaque génération
+    │   ├── entities/          #   une entité sea-orm par table
+    │   ├── hooks.rs           #   déclare vos fichiers de hooks
+    │   ├── migrations.rs      #   liste des migrations
+    │   └── mod.rs             #   assemblage : app()
+    ├── src/custom/            # votre code, jamais modifié par forge
+    │   ├── hooks/<table>.rs   #   hooks de chaque table
+    │   └── routes.rs          #   routes HTTP personnalisées
+    ├── src/migrations/        # migrations (une fois créées, jamais réécrites)
+    └── tests/generated_crud.rs  # test CRUD de chaque table (réécrit)
+```
+
+### 2. Démarrer l'API
+
+```bash
+cd crm/backend
+cargo run                        # SQLite `data.db`, port 8080, migrations appliquées
+DATABASE_URL=postgres://user:mdp@localhost/crm cargo run    # ou PostgreSQL / MySQL
+```
+
+Variables : `DATABASE_URL`, `FORGE_ADDR` (défaut `0.0.0.0:8080`),
+`FORGE_AUTO_MIGRATE` (défaut `true`), `RUST_LOG`.
+
+### 3. Utiliser l'API
+
+```bash
+curl -X POST localhost:8080/api/entreprise -H 'content-type: application/json' \
+     -d '{"nom": "Acme", "secteur": "industrie", "chiffre_affaires": "1250000.50"}'
+curl -X POST localhost:8080/api/tag -H 'content-type: application/json' -d '{"nom": "urgent"}'
+curl -X POST localhost:8080/api/opportunite -H 'content-type: application/json' \
+     -d '{"titre": "Contrat cadre", "entreprise": 1, "montant": "45000", "tags": [1]}'
+
+curl -g 'localhost:8080/api/opportunite?etape=prospect&montant[gte]=10000&sort=-montant'
+curl -X PATCH localhost:8080/api/opportunite/1 -H 'content-type: application/json' -d '{"etape": "gagne"}'
+curl -X PUT localhost:8080/api/parameters/tva -H 'content-type: application/json' -d '{"value": 5.5}'
+```
+
+Les valeurs par défaut du schéma sont appliquées (`probabilite` vaut 50, `etape`
+vaut `prospect`), et les erreurs sont détaillées par champ :
+
+```json
+{ "error": { "code": "validation", "message": "données invalides",
+  "fields": { "etape": ["`signe` ne fait pas partie des valeurs (prospect, proposition, gagne, perdu)"],
+              "titre": ["valeur obligatoire"] } } }
+```
+
+### 4. Ajouter un hook
+
+Les hooks d'une table se trouvent dans `backend/src/custom/hooks/<table>.rs`.
+Pour refuser les opportunités à montant nul ou négatif :
+
+```rust
+use forge_runtime::{Error, HookContext, Hooks};
+use sea_orm::prelude::Decimal;
+
+use crate::generated::entities::opportunite::{ActiveModel, Entity};
+
+#[derive(Debug, Default)]
+pub struct OpportuniteHooks;
+
+impl Hooks<Entity> for OpportuniteHooks {
+    async fn validate(&self, _ctx: &HookContext<'_>, record: &ActiveModel) -> Result<(), Error> {
+        match record.montant.try_as_ref() {
+            Some(montant) if *montant <= Decimal::ZERO => Err(Error::validation(
+                "montant",
+                "le montant doit être strictement positif",
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+```
+
+Méthodes disponibles (toutes facultatives) : `before_create`, `after_create`,
+`before_update`, `after_update`, `before_delete`, `validate`. Elles s'exécutent dans
+la transaction de la requête (`ctx.db()`) ; une erreur annule toute l'opération.
+Ordre : `before_create`/`before_update` → `validate` → écriture → `after_*`.
+
+### 5. Ajouter une route
+
+```rust
+// backend/src/custom/routes.rs
+pub fn routes() -> Router<AppState> {
+    Router::new().route("/api/ping", axum::routing::get(|| async { "pong" }))
+}
+```
+
+### 6. Tester
+
+```bash
+cargo test                                            # SQLite en mémoire
+TEST_DATABASE_URL=postgres://… cargo test             # base recréée : base de test dédiée !
+```
+
+`tests/generated_crud.rs` vérifie création, lecture, liste, filtre, modification,
+suppression et contraintes de chaque table. Pour vos propres tests,
+`forge_runtime::testing::TestClient` envoie des requêtes à l'application sans
+réseau : voir [`examples/crm/backend/tests/hooks.rs`](examples/crm/backend/tests/hooks.rs).
+
+### 7. Régénérer
+
+`forge generate` réécrit `src/generated/` et `tests/generated_crud.rs`, crée les
+fichiers de hooks des nouvelles tables, et ne touche jamais à `src/custom/`. Les
+changements sans effet sur le stockage (libellés, vues, règles…) sont appliqués
+immédiatement. Les changements de structure (nouvelle colonne…) nécessiteront les
+migrations incrémentales de la phase 2 : `forge generate` les refuse pour l'instant,
+avec un message explicite.
+
+## API REST générée
+
+| Méthode | Chemin | Effet |
+|---|---|---|
+| `GET` | `/api/<table>` | Liste : `{ "data": [...], "page", "per_page", "total" }` |
+| `POST` | `/api/<table>` | Création → `201` |
+| `GET` | `/api/<table>/{id}` | Lecture |
+| `PATCH` | `/api/<table>/{id}` | Modification partielle |
+| `DELETE` | `/api/<table>/{id}` | Suppression → `204` |
+| `GET` | `/api/parameters` | Paramètres et leurs valeurs |
+| `GET`/`PUT` | `/api/parameters/{name}` | Lecture / modification : `{ "value": … }` |
+
+Paramètres de liste :
+
+| Paramètre | Exemple | Effet |
+|---|---|---|
+| `page`, `per_page` | `page=2&per_page=50` | Pagination (25 par défaut, 100 maximum) |
+| `sort` | `sort=-montant,titre` | Tri ; `-` pour décroissant |
+| `q` | `q=dupont` | Recherche (contient, sans casse) dans les colonnes texte |
+| `<colonne>` | `etape=gagne` | Égalité |
+| `<colonne>[op]` | `montant[gte]=1000` | `ne`, `lt`, `lte`, `gt`, `gte`, `like`, `in` (`a,b`), `null` (`true`/`false`) |
+
+Seules les colonnes stockées (dont `id`, `owner`, `created_at`, `updated_at`) sont
+filtrables et triables. Formats JSON : décimaux en texte (`"12.50"`, nombres acceptés
+en entrée), dates `AAAA-MM-JJ`, dates-heures RFC 3339, durées en secondes,
+`reference` = identifiant, `reference_list` = liste d'identifiants.
+
+Codes d'erreur : `400` requête mal formée, `404` introuvable, `409` conflit (valeur
+unique déjà prise, référence invalide, suppression d'un enregistrement référencé par
+une référence obligatoire), `422` validation (détail par champ).
+
+Suppression : une référence obligatoire bloque la suppression de sa cible, une
+référence facultative est remise à `null`, les liens `reference_list` sont supprimés.
+
+### Bases de données
+
+| | SQLite | PostgreSQL | MySQL / MariaDB |
+|---|---|---|---|
+| Usage conseillé | développement, tests | production | production |
+| `decimal` | flottant (~15 chiffres significatifs) | `decimal(19,4)` exact | `decimal(19,4)` exact |
+| `datetime` | texte | `timestamptz` | `timestamp` (1970–2038, à la seconde) |
 
 ## Format d'entrée
 
@@ -60,7 +238,7 @@ Ajoutez en tête de votre fichier :
 { "$schema": "chemin/vers/forge.schema.json", ... }
 ```
 
-Exemple complet : [`examples/crm/schema.json`](examples/crm/schema.json).
+Exemple complet : [`examples/crm/forge.json`](examples/crm/forge.json).
 
 ### Racine
 
@@ -102,6 +280,9 @@ Tables système réservées : `users`, `roles`, `user_roles`, `parameters`, `ref
 
 `inverse` nomme la relation vue depuis la table cible (par défaut : le nom de la
 table source). Il sert dans les agrégats : `SUM(opportunites.montant)`.
+Une `reference_list` crée la table de jointure `<table>_<colonne>`. Un cycle de
+références obligatoires (A exige B qui exige A) est refusé : aucun enregistrement ne
+pourrait être créé.
 
 ### Options de colonne
 
@@ -152,20 +333,27 @@ de la table, des comparaisons et `AND`/`OR`/`NOT`, sans fonctions.
 
 ```text
 crates/
-├── forge-schema/   format d'entrée : types serde, validation, modèle résolu, JSON Schema
+├── forge-schema/   format d'entrée : types serde, validation, modèle résolu, valeurs typées, JSON Schema
 ├── forge-formula/  langage de formules : lexer, parser, AST, registre de fonctions
+├── forge-codegen/  génération : structure de stockage, templates, écriture idempotente
+├── forge-runtime/  logique des apps générées : CRUD générique, filtres, hooks, migrations, CLI
 └── forge-cli/      binaire `forge`
-examples/crm/       schéma de référence (validé en CI)
+templates/backend/  templates minijinja, embarqués dans le binaire
+examples/crm/       projet de référence généré (membre du workspace, testé en CI)
 ```
 
-Les crates `forge-codegen`, `forge-runtime` et le package `forge_flutter`
-seront ajoutés à partir des phases où ils deviennent utiles.
+Le backend généré embarque son schéma (`src/generated/forge.json`) : `forge-runtime`
+le relit au démarrage et en tire tout le comportement générique (validation des
+corps, filtres, valeurs par défaut, liens N↔N, paramètres). Le code généré se
+limite aux entités sea-orm typées, à la migration et au branchement des hooks.
 
 ## Développement
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features                              # inclut le CRUD du CRM sur SQLite
+TEST_DATABASE_URL=postgres://… cargo test -p mini_crm  # idem sur PostgreSQL ou MySQL
 cargo run -p forge-cli -- schema > forge.schema.json   # après modification de spec.rs
+cargo run -p forge-cli -- generate --dir examples/crm  # après modification des templates ou du codegen
 ```

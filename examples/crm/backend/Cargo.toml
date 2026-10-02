@@ -1,0 +1,17 @@
+[package]
+name = "mini_crm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = "0.8"
+forge-runtime = { path = "../../../crates/forge-runtime" }
+sea-orm = { version = "2", default-features = false, features = ["macros", "with-chrono", "with-json", "with-rust_decimal"] }
+sea-orm-migration = { version = "2", default-features = false }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+forge-runtime = { path = "../../../crates/forge-runtime", features = ["testing"] }
+serde_json = "1"

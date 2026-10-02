@@ -75,7 +75,7 @@ fn base_is_valid() {
 
 #[test]
 fn crm_example_is_valid() {
-    let src = include_str!("../../../examples/crm/schema.json");
+    let src = include_str!("../../../examples/crm/forge.json");
     let model = Model::from_json(src).unwrap_or_else(|err| panic!("{err}"));
     assert_eq!(model.tables().len(), 5);
 }
@@ -623,4 +623,48 @@ fn rule_condition_cannot_use_unpersisted_formula() {
 
     schema["tables"][1]["columns"][4]["persist"] = json!(true);
     assert!(issues(&schema).is_empty(), "{:#?}", issues(&schema));
+}
+
+#[test]
+fn join_tables() {
+    let model = load(&base()).unwrap();
+    assert_eq!(
+        model.relations()[1].join_table().as_deref(),
+        Some("commande_produits")
+    );
+    assert_eq!(model.relations()[0].join_table(), None);
+
+    let mut schema = base();
+    schema["tables"].as_array_mut().unwrap().push(
+        json!({ "name": "commande_produits", "columns": [{ "name": "x", "type": "string" }] }),
+    );
+    assert_issue(
+        &schema,
+        "tables[1].columns[3]",
+        "table de jointure `commande_produits`",
+    );
+}
+
+#[test]
+fn required_reference_cycles() {
+    let mut schema = base();
+    schema["tables"][1]["columns"][0]["required"] = json!(true);
+    schema["tables"][0]["columns"].as_array_mut().unwrap().push(
+        json!({ "name": "derniere", "type": "reference", "target": "commande", "required": true, "inverse": "derniere_de" }),
+    );
+    assert_issue(
+        &schema,
+        "tables[0]",
+        "références obligatoires circulaires (client → commande → client)",
+    );
+
+    // Une seule des deux références obligatoire : insertion possible.
+    schema["tables"][0]["columns"][2]["required"] = json!(false);
+    assert!(issues(&schema).is_empty(), "{:#?}", issues(&schema));
+
+    let schema = with_column(
+        0,
+        json!({ "name": "parent", "type": "reference", "target": "client", "required": true }),
+    );
+    assert_issue(&schema, "tables[0]", "client → client");
 }

@@ -1,0 +1,4 @@
+//! NE PAS MODIFIER : entités sea-orm générées par forge, une par table.
+{% for table in tables %}
+pub mod {{ table.name }};
+{%- endfor %}

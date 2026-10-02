@@ -19,6 +19,7 @@ mod model;
 pub mod names;
 pub mod spec;
 mod validate;
+pub mod value;
 
 pub use error::{Issue, SchemaError};
 pub use model::{ColumnRef, Model, Relation, RelationKind};

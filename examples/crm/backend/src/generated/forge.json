@@ -1,0 +1,136 @@
+{
+  "$schema": "../../forge.schema.json",
+  "app": { "name": "mini_crm", "default_locale": "fr", "locales": ["fr", "en"] },
+  "roles": ["admin", "commercial", "lecteur"],
+  "parameters": [
+    { "name": "tva", "type": "decimal", "default": 20, "label": { "fr": "Taux de TVA (%)", "en": "VAT rate (%)" } },
+    { "name": "devise", "type": "string", "default": "EUR", "label": { "fr": "Devise", "en": "Currency" } }
+  ],
+  "tables": [
+    {
+      "name": "entreprise",
+      "label": { "fr": "Entreprise", "en": "Company" },
+      "columns": [
+        { "name": "nom", "type": "string", "required": true, "unique": true, "title_field": true,
+          "label": { "fr": "Nom", "en": "Name" } },
+        { "name": "secteur", "type": "enum", "values": ["industrie", "services", "commerce", "public"],
+          "label": { "fr": "Secteur", "en": "Industry" } },
+        { "name": "ville", "type": "string", "label": { "fr": "Ville", "en": "City" } },
+        { "name": "site_web", "type": "string", "label": { "fr": "Site web", "en": "Website" } },
+        { "name": "chiffre_affaires", "type": "decimal", "label": { "fr": "Chiffre d'affaires", "en": "Revenue" } },
+        { "name": "pipeline", "type": "decimal", "formula": "SUM(opportunites.montant)", "persist": true,
+          "label": { "fr": "Pipeline", "en": "Pipeline" } },
+        { "name": "pipeline_pondere", "type": "decimal", "formula": "SUM(opportunites.montant_pondere)",
+          "label": { "fr": "Pipeline pondéré", "en": "Weighted pipeline" } },
+        { "name": "nb_contacts", "type": "integer", "formula": "COUNT(contacts)",
+          "label": { "fr": "Contacts", "en": "Contacts" } }
+      ],
+      "views": {
+        "stats": { "fields": ["chiffre_affaires", "pipeline"], "group_by": "secteur" }
+      },
+      "rules": [
+        { "roles": ["admin"], "actions": ["*"] },
+        { "roles": ["commercial"], "actions": ["read", "create", "update"] },
+        { "roles": ["lecteur"], "actions": ["read"] }
+      ]
+    },
+    {
+      "name": "contact",
+      "label": { "fr": "Contact", "en": "Contact" },
+      "columns": [
+        { "name": "prenom", "type": "string", "title_field": true, "label": { "fr": "Prénom", "en": "First name" } },
+        { "name": "nom", "type": "string", "required": true, "title_field": true, "label": { "fr": "Nom", "en": "Last name" } },
+        { "name": "email", "type": "string", "unique": true, "label": { "fr": "E-mail", "en": "Email" } },
+        { "name": "telephone", "type": "string", "label": { "fr": "Téléphone", "en": "Phone" } },
+        { "name": "poste", "type": "string", "label": { "fr": "Poste", "en": "Job title" } },
+        { "name": "entreprise", "type": "reference", "target": "entreprise", "inverse": "contacts",
+          "label": { "fr": "Entreprise", "en": "Company" } },
+        { "name": "secteur", "type": "lookup", "path": "entreprise.secteur", "label": { "fr": "Secteur", "en": "Industry" } },
+        { "name": "notes", "type": "text", "hidden": true, "label": { "fr": "Notes", "en": "Notes" } }
+      ],
+      "rules": [
+        { "roles": ["admin"], "actions": ["*"] },
+        { "roles": ["commercial"], "actions": ["read", "create"] },
+        { "roles": ["commercial"], "actions": ["update", "delete"], "when": "owner == $user.id" },
+        { "roles": ["lecteur"], "actions": ["read"] }
+      ]
+    },
+    {
+      "name": "opportunite",
+      "label": { "fr": "Opportunité", "en": "Opportunity" },
+      "columns": [
+        { "name": "titre", "type": "string", "required": true, "title_field": true, "label": { "fr": "Titre", "en": "Title" } },
+        { "name": "entreprise", "type": "reference", "target": "entreprise", "required": true, "inverse": "opportunites",
+          "label": { "fr": "Entreprise", "en": "Company" } },
+        { "name": "contact", "type": "reference", "target": "contact", "inverse": "opportunites",
+          "label": { "fr": "Contact principal", "en": "Main contact" } },
+        { "name": "secteur", "type": "lookup", "path": "entreprise.secteur", "label": { "fr": "Secteur", "en": "Industry" } },
+        { "name": "montant", "type": "decimal", "required": true, "label": { "fr": "Montant HT", "en": "Amount" } },
+        { "name": "probabilite", "type": "integer", "default": 50, "label": { "fr": "Probabilité (%)", "en": "Probability (%)" } },
+        { "name": "montant_pondere", "type": "decimal", "formula": "montant * probabilite / 100", "persist": true,
+          "label": { "fr": "Montant pondéré", "en": "Weighted amount" } },
+        { "name": "montant_ttc", "type": "decimal", "formula": "ROUND(montant * (1 + $param.tva / 100), 2)",
+          "label": { "fr": "Montant TTC", "en": "Amount incl. VAT" } },
+        { "name": "etape", "type": "enum", "values": ["prospect", "proposition", "gagne", "perdu"], "default": "prospect",
+          "label": { "fr": "Étape", "en": "Stage" } },
+        { "name": "date_cloture", "type": "date", "label": { "fr": "Date de clôture", "en": "Close date" } },
+        { "name": "jours_restants", "type": "integer", "formula": "DAYS_BETWEEN(TODAY(), date_cloture)",
+          "label": { "fr": "Jours restants", "en": "Days left" } },
+        { "name": "tags", "type": "reference_list", "target": "tag", "inverse": "opportunites",
+          "label": { "fr": "Étiquettes", "en": "Tags" } },
+        { "name": "notes_internes", "type": "text", "hidden": true, "label": { "fr": "Notes internes", "en": "Internal notes" } }
+      ],
+      "views": {
+        "calendar": { "start": "date_cloture" },
+        "stats": { "fields": ["montant", "montant_pondere"], "group_by": "etape" }
+      },
+      "rules": [
+        { "roles": ["admin"], "actions": ["*"] },
+        { "roles": ["commercial"], "actions": ["read", "create"] },
+        { "roles": ["commercial"], "actions": ["update", "delete"], "when": "owner == $user.id" },
+        { "roles": ["lecteur"], "actions": ["read"] }
+      ]
+    },
+    {
+      "name": "activite",
+      "label": { "fr": "Activité", "en": "Activity" },
+      "columns": [
+        { "name": "sujet", "type": "string", "required": true, "title_field": true, "label": { "fr": "Sujet", "en": "Subject" } },
+        { "name": "nature", "type": "enum", "values": ["appel", "reunion", "email", "tache"], "required": true,
+          "label": { "fr": "Nature", "en": "Kind" } },
+        { "name": "debut", "type": "datetime", "required": true, "label": { "fr": "Début", "en": "Start" } },
+        { "name": "duree", "type": "duration", "default": 1800, "label": { "fr": "Durée", "en": "Duration" } },
+        { "name": "opportunite", "type": "reference", "target": "opportunite", "inverse": "activites",
+          "label": { "fr": "Opportunité", "en": "Opportunity" } },
+        { "name": "contact", "type": "reference", "target": "contact", "inverse": "activites",
+          "label": { "fr": "Contact", "en": "Contact" } },
+        { "name": "terminee", "type": "boolean", "default": false, "label": { "fr": "Terminée", "en": "Done" } },
+        { "name": "compte_rendu", "type": "text", "label": { "fr": "Compte rendu", "en": "Report" } }
+      ],
+      "views": {
+        "calendar": { "start": "debut", "duration": "duree" },
+        "stats": { "fields": ["duree"], "group_by": "nature" }
+      },
+      "rules": [
+        { "roles": ["admin"], "actions": ["*"] },
+        { "roles": ["commercial"], "actions": ["read", "create"] },
+        { "roles": ["commercial"], "actions": ["update", "delete"], "when": "owner == $user.id" },
+        { "roles": ["lecteur"], "actions": ["read"] }
+      ]
+    },
+    {
+      "name": "tag",
+      "label": { "fr": "Étiquette", "en": "Tag" },
+      "columns": [
+        { "name": "nom", "type": "string", "required": true, "unique": true, "title_field": true, "label": { "fr": "Nom", "en": "Name" } },
+        { "name": "couleur", "type": "string", "default": "#607D8B", "label": { "fr": "Couleur", "en": "Color" } },
+        { "name": "nb_opportunites", "type": "integer", "formula": "COUNT(opportunites)",
+          "label": { "fr": "Opportunités", "en": "Opportunities" } }
+      ],
+      "rules": [
+        { "roles": ["admin"], "actions": ["*"] },
+        { "roles": ["commercial", "lecteur"], "actions": ["read"] }
+      ]
+    }
+  ]
+}

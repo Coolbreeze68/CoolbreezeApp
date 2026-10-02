@@ -1,0 +1,22 @@
+[package]
+name = "forge-codegen"
+description = "Génération du code des applications forge (backend, migrations)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-schema.workspace = true
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -7,13 +7,21 @@ Guide pour travailler sur ce dépôt : forge, un générateur d'applications
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings    # clippy::pedantic activé au niveau workspace
-cargo test
-cargo run -p forge-cli -- validate examples/crm/schema.json
-cargo run -p forge-cli -- schema > forge.schema.json   # obligatoire après modification de spec.rs
+cargo clippy --all-targets --all-features -- -D warnings  # pedantic sur les crates forge
+cargo test --all-features
+cargo run -p forge-cli -- validate examples/crm/forge.json
+cargo run -p forge-cli -- schema > forge.schema.json    # obligatoire après modification de spec.rs
+cargo run -p forge-cli -- generate --dir examples/crm   # obligatoire après modification des templates/codegen
+TEST_DATABASE_URL=postgres://… cargo test -p mini_crm    # CRUD du CRM sur PostgreSQL ou MySQL
 ```
 
-Un test (`json_schema_file_is_up_to_date`) échoue si `forge.schema.json` est obsolète.
+Tests de cohérence : `json_schema_file_is_up_to_date` échoue si `forge.schema.json`
+est obsolète, `crm_example_is_up_to_date` si `examples/crm` ne correspond plus à ce
+que produit le générateur. `examples/crm/backend` est membre du workspace : son test
+CRUD généré tourne avec `cargo test`.
+
+Postgres et MariaDB peuvent être installés localement (pas de Docker dans
+l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 
 ## Règles de travail
 
@@ -29,23 +37,43 @@ Un test (`json_schema_file_is_up_to_date`) échoue si `forge.schema.json` est ob
 | Crate | Rôle |
 |---|---|
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`. `FunctionRegistry` liste les signatures (arité, agrégat, volatile). Aucune connaissance du schéma. |
-| `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `graph` : tri et cycles. `names` : identifiants et mots réservés. |
-| `forge-cli` | Binaire `forge` (clap, anyhow). Commandes : `validate`, `schema`. |
+| `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
+| `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
+| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `resource` : CRUD générique sur `ForgeEntity`. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan` + migrations système. `cli` : binaire généré. `testing` (feature) : base de test, `TestClient`, `check_resources`. |
+| `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 
-Crates prévues (pas encore créées) : `forge-codegen` (templates minijinja embarqués),
-`forge-runtime` (logique commune des apps générées), et le package Dart
-`packages/forge_flutter`.
+Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
+`forge-codegen/src/render.rs`). À prévoir : `packages/forge_flutter` (phase 7).
 
 ### Principes
 
-- Le maximum de logique vit dans les runtimes (`forge-runtime`, `forge_flutter`).
-  Le code généré se limite aux déclarations typées : entités, objets GraphQL, branchement.
-- Le backend généré embarque le schéma ; le runtime le relit avec `forge-schema`
-  pour piloter CRUD, règles, formules, CSV, agrégats et OpenAPI.
-- Régénération sans perte : `src/generated/` est réécrit, `src/custom/` jamais.
-  Même principe côté Flutter (`lib/generated/`, `lib/custom/`).
-  `forge generate` doit être idempotent.
-- L'app générée dépend de `forge-runtime` par chemin (`--runtime-path`).
+- Le maximum de logique vit dans les runtimes. Le code généré se limite aux
+  déclarations typées : entités, migration, branchement (`generated/mod.rs`).
+- Le backend généré embarque une copie de `forge.json` (`src/generated/forge.json`) ;
+  le runtime la relit pour piloter validation, filtres, défauts, liens, paramètres.
+- Régénération sans perte : `src/generated/` et `tests/generated_crud.rs` sont réécrits,
+  `src/custom/`, `Cargo.toml`, `main.rs`, `lib.rs` et les migrations jamais.
+  Les hooks (`src/custom/hooks/<table>.rs`) sont déclarés par `generated/hooks.rs`
+  via `#[path]`, pour que l'ajout d'une table ne touche aucun fichier utilisateur.
+- `forge generate` est idempotent (fichier identique = non réécrit).
+- L'app générée dépend de `forge-runtime` par chemin (relatif, ou absolu si les
+  chemins n'ont que la racine en commun).
+- Le code généré doit passer `clippy -D warnings` (lints par défaut) : l'exemple CRM
+  est compilé par la CI.
+
+### Runtime : conventions
+
+- Colonnes en base = noms du schéma (une `reference` `entreprise` stocke l'id dans
+  la colonne `entreprise`). Tables de jointure : `<table>_<colonne>` (`source_id`, `target_id`).
+- Valeurs : `TypedValue` → `values::to_db` produit la variante sea-orm exacte, y compris
+  pour `NULL` (`try_set` refuse une variante incorrecte).
+- `decimal(19,4)`, `varchar(255)` (longueur vérifiée par `payload`), `bigint` pour les
+  entiers, durées et identifiants.
+- Suppression : référence obligatoire → `RESTRICT`, facultative → `SET NULL`,
+  jointure → `CASCADE`. SQLite reçoit ses clés étrangères dans le `CREATE TABLE`,
+  les autres bases après création de toutes les tables (`migration::Plan`).
+- Erreurs : `Error` → JSON `{ error: { code, message, fields? } }` ; les erreurs
+  internes sont journalisées, pas exposées.
 
 ### Validation (`forge-schema/src/validate.rs`)
 
@@ -69,4 +97,11 @@ Crates prévues (pas encore créées) : `forge-codegen` (templates minijinja emb
 - Une formule `persist` ne peut pas appeler de fonction volatile (`TODAY`).
 - Conditions `when` : uniquement colonnes stockées de la table, `$user.id|email`,
   `$param.*`, littéraux et opérateurs, sans fonctions, pour rester traduisibles en SQL.
+- Le schéma du CRM est `examples/crm/forge.json` (le projet de référence est versionné).
+- Phase 1 : `owner` reste `NULL` (auth en phase 3) ; formules non persistées et lookups
+  absents des réponses, formules persistées à `NULL` (phase 4) ; tout changement de
+  structure de stockage est refusé par `forge generate` (`Error::StorageChanged`,
+  levé en phase 2).
+- SQLite stocke les `decimal` en flottant (limite de sea-orm/sqlx) : réservé au
+  développement et aux tests.
 - Hors périmètre v1 : temps réel, multi-tenant, workflows, upload de fichiers.

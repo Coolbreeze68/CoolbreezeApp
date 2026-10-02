@@ -1,0 +1,233 @@
+{
+  "tables": [
+    {
+      "name": "entreprise",
+      "columns": [
+        {
+          "name": "nom",
+          "storage": "string",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "secteur",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "ville",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "site_web",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "chiffre_affaires",
+          "storage": "decimal",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "pipeline",
+          "storage": "decimal",
+          "nullable": true,
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "contact",
+      "columns": [
+        {
+          "name": "prenom",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "nom",
+          "storage": "string",
+          "nullable": false,
+          "unique": false
+        },
+        {
+          "name": "email",
+          "storage": "string",
+          "nullable": true,
+          "unique": true
+        },
+        {
+          "name": "telephone",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "poste",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "entreprise",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false,
+          "references": "entreprise"
+        },
+        {
+          "name": "notes",
+          "storage": "text",
+          "nullable": true,
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "opportunite",
+      "columns": [
+        {
+          "name": "titre",
+          "storage": "string",
+          "nullable": false,
+          "unique": false
+        },
+        {
+          "name": "entreprise",
+          "storage": "big_integer",
+          "nullable": false,
+          "unique": false,
+          "references": "entreprise"
+        },
+        {
+          "name": "contact",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false,
+          "references": "contact"
+        },
+        {
+          "name": "montant",
+          "storage": "decimal",
+          "nullable": false,
+          "unique": false
+        },
+        {
+          "name": "probabilite",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "montant_pondere",
+          "storage": "decimal",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "etape",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "date_cloture",
+          "storage": "date",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "notes_internes",
+          "storage": "text",
+          "nullable": true,
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "activite",
+      "columns": [
+        {
+          "name": "sujet",
+          "storage": "string",
+          "nullable": false,
+          "unique": false
+        },
+        {
+          "name": "nature",
+          "storage": "string",
+          "nullable": false,
+          "unique": false
+        },
+        {
+          "name": "debut",
+          "storage": "timestamp",
+          "nullable": false,
+          "unique": false
+        },
+        {
+          "name": "duree",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "opportunite",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false,
+          "references": "opportunite"
+        },
+        {
+          "name": "contact",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false,
+          "references": "contact"
+        },
+        {
+          "name": "terminee",
+          "storage": "boolean",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "compte_rendu",
+          "storage": "text",
+          "nullable": true,
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "tag",
+      "columns": [
+        {
+          "name": "nom",
+          "storage": "string",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "couleur",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        }
+      ]
+    }
+  ],
+  "join_tables": [
+    {
+      "name": "opportunite_tags",
+      "source": "opportunite",
+      "target": "tag"
+    }
+  ]
+}

@@ -138,6 +138,7 @@ impl<'a> Validator<'a> {
         self.check_parameters();
         self.check_tables();
         self.build_relations();
+        self.check_required_references();
         self.check_expressions();
         self.check_views();
         self.check_rules();
@@ -469,14 +470,69 @@ impl<'a> Validator<'a> {
                     continue;
                 }
 
-                self.inverses.insert((target, inverse), &table.name);
-                self.relations.push(Relation {
+                let relation = Relation {
                     source: ColumnRef::new(&table.name, &column.name),
                     target: target.to_owned(),
                     kind,
                     inverse: inverse.to_owned(),
-                });
+                };
+                if let Some(join) = relation.join_table() {
+                    let taken = self.tables.contains_key(join.as_str())
+                        || SYSTEM_TABLES.contains(&join.as_str())
+                        || self
+                            .relations
+                            .iter()
+                            .any(|r| r.join_table().as_ref() == Some(&join));
+                    if taken {
+                        self.error(
+                            path,
+                            format!("la table de jointure `{join}` entre en conflit avec une autre table"),
+                        );
+                        continue;
+                    }
+                }
+                self.inverses.insert((target, inverse), &table.name);
+                self.relations.push(relation);
             }
+        }
+    }
+
+    /// Un cycle de références obligatoires empêcherait toute insertion.
+    fn check_required_references(&mut self) {
+        let spec = self.spec;
+        let mut edges: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for table in &spec.tables {
+            let deps = edges.entry(table.name.as_str()).or_default();
+            for column in table
+                .columns
+                .iter()
+                .filter(|c| c.required && c.ty == ColumnType::Reference)
+            {
+                if let Some(target) = column
+                    .target
+                    .as_deref()
+                    .filter(|t| self.tables.contains_key(t))
+                {
+                    deps.insert(target);
+                }
+            }
+        }
+        let cycles = graph::sort(&edges).cycles;
+        for cycle in cycles {
+            let first = cycle[0];
+            let path = self
+                .tables
+                .get(first)
+                .map(|(i, _)| format!("tables[{i}]"))
+                .unwrap_or_default();
+            self.error(
+                path,
+                format!(
+                    "références obligatoires circulaires ({}) : aucun enregistrement ne pourrait être créé ; \
+                     rendez l'une d'elles facultative",
+                    cycle.join(" → ")
+                ),
+            );
         }
     }
 
@@ -1043,41 +1099,5 @@ fn check_value(
     values: Option<&[String]>,
     value: &serde_json::Value,
 ) -> Result<(), String> {
-    use serde_json::Value;
-
-    let ok = match (ty, value) {
-        (ColumnType::String | ColumnType::Text, Value::String(_))
-        | (ColumnType::Decimal, Value::Number(_))
-        | (ColumnType::Boolean, Value::Bool(_)) => true,
-        (ColumnType::Integer, Value::Number(n)) => n.is_i64(),
-        (ColumnType::Duration, Value::Number(n)) => n.is_u64(),
-        (ColumnType::Date, Value::String(s)) => {
-            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
-        }
-        (ColumnType::Datetime, Value::String(s)) => chrono::DateTime::parse_from_rfc3339(s).is_ok(),
-        (ColumnType::Enum, Value::String(s)) => {
-            return match values {
-                Some(values) if !values.contains(s) => Err(format!(
-                    "`{s}` ne fait pas partie des valeurs ({})",
-                    values.join(", ")
-                )),
-                _ => Ok(()),
-            };
-        }
-        _ => false,
-    };
-    if ok {
-        Ok(())
-    } else {
-        let expected = match ty {
-            ColumnType::Integer => "un entier",
-            ColumnType::Decimal => "un nombre",
-            ColumnType::Boolean => "true ou false",
-            ColumnType::Duration => "un nombre entier positif de secondes",
-            ColumnType::Date => "une date `AAAA-MM-JJ`",
-            ColumnType::Datetime => "une date-heure RFC 3339 (`2026-01-31T09:00:00Z`)",
-            _ => "un texte",
-        };
-        Err(format!("valeur `{value}` invalide : attendu {expected}"))
-    }
+    crate::value::from_json(ty, values, value).map(drop)
 }

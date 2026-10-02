@@ -1,0 +1,22 @@
+//! NE PAS MODIFIER : code généré par forge depuis `forge.json`.
+//!
+//! Ce dossier est réécrit à chaque `forge generate`. Votre code va dans `src/custom/`.
+
+pub mod entities;
+pub mod hooks;
+mod migrations;
+
+pub use migrations::Migrator;
+
+/// Schéma de l'application, tel qu'au dernier `forge generate`.
+pub const SCHEMA: &str = include_str!("forge.json");
+
+/// Application complète : une ressource par table, avec ses hooks, et les routes
+/// personnalisées de `src/custom/routes.rs`.
+pub fn app() -> Result<forge_runtime::App, forge_runtime::Error> {
+    Ok(forge_runtime::App::new(SCHEMA)?
+{%- for table in tables %}
+        .resource::<entities::{{ table.name }}::Entity, hooks::{{ table.name }}::{{ table.type_name }}Hooks>()
+{%- endfor %}
+        .routes(crate::custom::routes::routes()))
+}

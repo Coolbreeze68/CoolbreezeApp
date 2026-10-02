@@ -1,0 +1,5 @@
+//! NE PAS MODIFIER : déclare les hooks de `src/custom/hooks/`, un fichier par table.
+{% for table in tables %}
+#[path = "../custom/hooks/{{ table.name }}.rs"]
+pub mod {{ table.name }};
+{%- endfor %}

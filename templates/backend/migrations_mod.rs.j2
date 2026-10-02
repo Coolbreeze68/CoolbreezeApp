@@ -1,0 +1,20 @@
+//! NE PAS MODIFIER : liste les migrations de `src/migrations/`, dans l'ordre.
+
+use sea_orm_migration::prelude::*;
+{% for migration in migrations %}
+#[path = "../migrations/{{ migration }}.rs"]
+mod {{ migration }};
+{%- endfor %}
+
+/// Migrations système de forge, puis celles de l'application.
+pub struct Migrator;
+
+impl MigratorTrait for Migrator {
+    fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+        let mut migrations = forge_runtime::migration::system();
+{%- for migration in migrations %}
+        migrations.push(Box::new({{ migration }}::Migration));
+{%- endfor %}
+        migrations
+    }
+}

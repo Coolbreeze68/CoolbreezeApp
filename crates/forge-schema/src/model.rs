@@ -48,6 +48,14 @@ pub struct Relation {
     pub inverse: String,
 }
 
+impl Relation {
+    /// Table de jointure d'une relation N↔N : `<table>_<colonne>`.
+    pub fn join_table(&self) -> Option<String> {
+        (self.kind == RelationKind::ManyToMany)
+            .then(|| format!("{}_{}", self.source.table, self.source.column))
+    }
+}
+
 /// Schéma validé : toutes les références sont résolues et les formules analysées.
 #[derive(Debug, Clone)]
 pub struct Model {

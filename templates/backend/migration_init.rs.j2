@@ -1,0 +1,42 @@
+//! Migration initiale : création des tables du schéma.
+//!
+//! Générée une seule fois par forge ; vous pouvez la compléter (données
+//! initiales, index…). Ne la modifiez plus une fois appliquée en production.
+
+use forge_runtime::migration::{OnDelete, Plan, drop_tables};
+use sea_orm_migration::prelude::*;
+use sea_orm_migration::schema::*;
+
+pub struct Migration;
+
+impl MigrationName for Migration {
+    fn name(&self) -> &str {
+        "{{ name }}"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        Plan::new()
+{%- for table in tables %}
+            .table("{{ table.name }}", |t| {
+{%- for column in table.columns %}
+                t.col({{ column }});
+{%- endfor %}
+            })
+{%- endfor %}
+{%- for reference in references %}
+            .reference("{{ reference.table }}", "{{ reference.column }}", "{{ reference.target }}", OnDelete::{{ reference.on_delete }})
+{%- endfor %}
+{%- for join in join_tables %}
+            .join_table("{{ join.name }}", "{{ join.source }}", "{{ join.target }}")
+{%- endfor %}
+            .create(manager)
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        drop_tables(manager, &[{% for name in drop_order %}"{{ name }}"{% if not loop.last %}, {% endif %}{% endfor %}]).await
+    }
+}

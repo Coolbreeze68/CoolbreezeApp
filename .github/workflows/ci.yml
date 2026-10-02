@@ -11,7 +11,7 @@ env:
 
 jobs:
   rust:
-    name: fmt · clippy · tests
+    name: fmt · clippy · tests (SQLite)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,14 +20,65 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # Inclut l'exemple CRM (membre du workspace) : CRUD complet sur SQLite,
+      # et vérification que examples/crm est à jour (génération idempotente).
+      - run: cargo test --workspace --all-features
 
-  crm:
-    name: exemple CRM (e2e)
+  databases:
+    name: exemple CRM sur ${{ matrix.db }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db: postgres
+            url: postgres://forge:forge@localhost:5432/crm_test
+          - db: mysql
+            url: mysql://forge:forge@127.0.0.1:3306/crm_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: forge
+          POSTGRES_PASSWORD: forge
+          POSTGRES_DB: crm_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U forge" --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_USER: forge
+          MYSQL_PASSWORD: forge
+          MYSQL_DATABASE: crm_test
+          MYSQL_ROOT_PASSWORD: root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run -p forge-cli -- validate examples/crm/schema.json
+      - run: cargo test -p mini_crm
+        env:
+          TEST_DATABASE_URL: ${{ matrix.url }}
+
+  forge-new:
+    name: forge new (projet autonome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p forge-cli
+      - name: Création, régénération sans changement, compilation et tests
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          ./target/debug/forge new "$RUNNER_TEMP/crm" --schema examples/crm/forge.json
+          ./target/debug/forge generate --dir "$RUNNER_TEMP/crm" | tee generate.log
+          grep -q "Aucun changement" generate.log
+          cargo test --manifest-path "$RUNNER_TEMP/crm/backend/Cargo.toml"
