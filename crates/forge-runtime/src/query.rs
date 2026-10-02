@@ -73,8 +73,11 @@ pub(crate) struct ListQuery {
 impl ListQuery {
     /// Analyse une chaîne de requête (`a=1&b[gte]=2`). Toutes les erreurs sont rapportées.
     pub(crate) fn parse(table: &Table, raw: Option<&str>) -> Result<Self, Error> {
-        let pairs: Vec<(String, String)> = serde_urlencoded::from_str(raw.unwrap_or_default())
-            .map_err(|err| Error::BadRequest(err.to_string()))?;
+        Self::from_pairs(table, pairs(raw)?)
+    }
+
+    /// Comme [`Self::parse`], sur des paires déjà décodées.
+    pub(crate) fn from_pairs(table: &Table, pairs: Vec<(String, String)>) -> Result<Self, Error> {
         let mut query = Self {
             page: 1,
             per_page: DEFAULT_PER_PAGE,
@@ -129,7 +132,17 @@ impl ListQuery {
     }
 
     /// Applique filtres, recherche et tri à une requête sea-orm.
-    pub(crate) fn apply<E: EntityTrait>(&self, table: &Table, mut select: Select<E>) -> Select<E> {
+    pub(crate) fn apply<E: EntityTrait>(&self, table: &Table, select: Select<E>) -> Select<E> {
+        let mut select = self.filter(table, select);
+        for (name, order) in &self.sort {
+            select = select.order_by(column_of::<E>(name), order.clone());
+        }
+        // L'identifiant en dernier critère garantit une pagination stable.
+        select.order_by(column_of::<E>("id"), Order::Asc)
+    }
+
+    /// Filtres et recherche, sans tri.
+    pub(crate) fn filter<E: EntityTrait>(&self, table: &Table, mut select: Select<E>) -> Select<E> {
         for filter in &self.filters {
             select = select.filter(filter.condition::<E>());
         }
@@ -145,12 +158,14 @@ impl ListQuery {
             }
             select = select.filter(any);
         }
-        for (name, order) in &self.sort {
-            select = select.order_by(column_of::<E>(name), order.clone());
-        }
-        // L'identifiant en dernier critère garantit une pagination stable.
-        select.order_by(column_of::<E>("id"), Order::Asc)
+        select
     }
+}
+
+/// Décode une chaîne de requête en paires clé-valeur.
+pub(crate) fn pairs(raw: Option<&str>) -> Result<Vec<(String, String)>, Error> {
+    serde_urlencoded::from_str(raw.unwrap_or_default())
+        .map_err(|err| Error::BadRequest(err.to_string()))
 }
 
 fn parse_filter(table: &Table, key: &str, raw: &str) -> Result<Filter, String> {

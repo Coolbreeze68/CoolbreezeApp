@@ -4,6 +4,7 @@
 //! |---|---|---|
 //! | `GET` | `/api/<table>` | liste paginée, triée, filtrée (voir [`crate::query`]) |
 //! | `POST` | `/api/<table>` | création → `201` |
+//! | `GET` | `/api/<table>/aggregate` | agrégats (voir [`crate::aggregate`]) |
 //! | `GET` | `/api/<table>/{id}` | lecture |
 //! | `PATCH` | `/api/<table>/{id}` | modification partielle |
 //! | `DELETE` | `/api/<table>/{id}` | suppression → `204` |
@@ -26,6 +27,7 @@ use sea_orm::{
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 
+use crate::aggregate::AggregateQuery;
 use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::error::Error;
@@ -33,7 +35,7 @@ use crate::hooks::{HookContext, Hooks};
 use crate::payload::{self, Mode, Payload};
 use crate::query::ListQuery;
 use crate::rules::{self, Scope};
-use crate::{links, values};
+use crate::{compute, links, values};
 
 /// Contraintes communes aux entités générées par forge (clé primaire `id: i64`).
 pub trait ForgeEntity:
@@ -76,7 +78,8 @@ pub(crate) fn router<E: ForgeEntity, H: Hooks<E>>(hooks: H) -> (String, Router<A
         hooks,
         entity: PhantomData::<fn() -> E>,
     });
-    let (r1, r2, r3, r4, r5) = (
+    let (r1, r2, r3, r4, r5, r6) = (
+        resource.clone(),
         resource.clone(),
         resource.clone(),
         resource.clone(),
@@ -88,6 +91,10 @@ pub(crate) fn router<E: ForgeEntity, H: Hooks<E>>(hooks: H) -> (String, Router<A
             &format!("/api/{table}"),
             get(move |state, user, query| list(r1, state, user, query))
                 .post(move |state, user, body| create(r2, state, user, body)),
+        )
+        .route(
+            &format!("/api/{table}/aggregate"),
+            get(move |state, user, query| aggregate(r6, state, user, query)),
         )
         .route(
             &format!("/api/{table}/{{id}}"),
@@ -117,7 +124,8 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
             .collect()
     }
 
-    /// Sérialise des enregistrements et y ajoute leurs `reference_list`.
+    /// Sérialise des enregistrements, avec leurs `reference_list`, lookups et
+    /// formules non persistées.
     async fn to_json(
         &self,
         state: &AppState,
@@ -136,6 +144,8 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
                 record[&column] = json!(linked.remove(id).unwrap_or_default());
             }
         }
+        let table = self.table(state);
+        compute::complete(db, &state.model, &state.functions, table, &mut records).await?;
         Ok(records)
     }
 
@@ -212,6 +222,14 @@ fn stamp<E: ForgeEntity>(record: &mut E::ActiveModel, owner: Option<i64>) -> Res
     assign::<E>(record, stamps)
 }
 
+/// La table a-t-elle des formules persistées (à relire après écriture) ?
+fn model_has_persisted(table: &Table) -> bool {
+    table
+        .columns
+        .iter()
+        .any(|c| c.formula.is_some() && c.persist)
+}
+
 /// Refus d'une modification qui sortirait l'enregistrement du périmètre autorisé.
 fn out_of_scope(table: &str) -> Error {
     Error::Forbidden(format!(
@@ -245,6 +263,18 @@ async fn list<E: ForgeEntity, H: Hooks<E>>(
         "per_page": query.per_page,
         "total": total,
     })))
+}
+
+async fn aggregate<E: ForgeEntity, H: Hooks<E>>(
+    resource: Arc<Resource<E, H>>,
+    State(state): State<AppState>,
+    user: CurrentUser,
+    RawQuery(raw): RawQuery,
+) -> Result<Json<JsonValue>, Error> {
+    let table = resource.table(&state);
+    let scope = rules::scope(&state, table, Action::Read, &user).await?;
+    let query = AggregateQuery::parse(table, raw.as_deref())?;
+    Ok(Json(query.run::<E>(&state.db, table, &scope).await?))
 }
 
 async fn read<E: ForgeEntity, H: Hooks<E>>(
@@ -286,6 +316,10 @@ async fn create<E: ForgeEntity, H: Hooks<E>>(
         return Err(out_of_scope(&table.name));
     }
     resource.save_links(&state, &txn, id, links).await?;
+    let changes = compute::neighborhood(&txn, &state.model, &table.name, id, false).await?;
+    compute::propagate(&txn, &state.model, &state.functions, changes).await?;
+    // Relu : les formules persistées viennent d'être calculées.
+    let model = resource.find(&txn, id, &Scope::All).await?;
     resource.hooks.after_create(&ctx, &model).await?;
     let json = resource.one_json(&state, &txn, model).await?;
     txn.commit().await?;
@@ -315,6 +349,8 @@ async fn update<E: ForgeEntity, H: Hooks<E>>(
         model: &state.model,
         user: &user,
     };
+    // Voisinage avant modification : références et liens qui vont peut-être changer.
+    let mut changes = compute::neighborhood(&txn, &state.model, &table.name, id, false).await?;
 
     let mut record = existing.into_active_model();
     assign::<E>(&mut record, values)?;
@@ -326,6 +362,13 @@ async fn update<E: ForgeEntity, H: Hooks<E>>(
         return Err(out_of_scope(&table.name));
     }
     resource.save_links(&state, &txn, id, links).await?;
+    changes.merge(compute::neighborhood(&txn, &state.model, &table.name, id, false).await?);
+    compute::propagate(&txn, &state.model, &state.functions, changes).await?;
+    let model = if model_has_persisted(table) {
+        resource.find(&txn, id, &Scope::All).await?
+    } else {
+        model
+    };
     resource.hooks.after_update(&ctx, &model).await?;
     let json = resource.one_json(&state, &txn, model).await?;
     txn.commit().await?;
@@ -352,7 +395,10 @@ async fn delete<E: ForgeEntity, H: Hooks<E>>(
         user: &user,
     };
     resource.hooks.before_delete(&ctx, &model).await?;
+    // Capturé avant suppression : ce qui référence l'enregistrement va changer.
+    let changes = compute::neighborhood(&txn, &state.model, &table.name, id, true).await?;
     E::delete_by_id(id).exec(&txn).await?;
+    compute::propagate(&txn, &state.model, &state.functions, changes).await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

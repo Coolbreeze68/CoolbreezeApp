@@ -353,22 +353,27 @@ fn with_formula(table: usize, formula: &str) -> Value {
 #[test]
 fn valid_formulas() {
     let formulas = [
-        (1, "montant * (1 + $param.tva / 100)"),
+        (1, "decimal", "montant * (1 + $param.tva / 100)"),
         (
             1,
+            "integer",
             "IF(livraison == NULL, 0, DAYS_BETWEEN(TODAY(), livraison))",
         ),
-        (1, "CONCAT(client.nom, \" \", client.categorie)"),
-        (1, "SUM(produits.prix) + COUNT(produits)"),
-        (0, "SUM(commandes.montant) / COUNT(commandes)"),
-        (0, "MAX(commandes.livraison)"),
-        (1, "id + owner"),
+        (1, "string", "CONCAT(client.nom, \" \", client.categorie)"),
+        (1, "decimal", "SUM(produits.prix) + COUNT(produits)"),
+        (0, "decimal", "SUM(commandes.montant) / COUNT(commandes)"),
+        (0, "date", "MAX(commandes.livraison)"),
+        (1, "integer", "id + owner"),
     ];
-    for (table, formula) in formulas {
+    for (table, ty, formula) in formulas {
+        let schema = with_column(
+            table,
+            json!({ "name": "calcul", "type": ty, "formula": formula }),
+        );
         assert!(
-            issues(&with_formula(table, formula)).is_empty(),
+            issues(&schema).is_empty(),
             "{formula} : {:#?}",
-            issues(&with_formula(table, formula))
+            issues(&schema)
         );
     }
 }
@@ -698,5 +703,120 @@ fn renamed_from_must_designate_a_former_column() {
         &schema,
         "tables[0].columns[3].renamed_from",
         "l'ancien nom d'une autre",
+    );
+}
+
+#[test]
+fn formula_types_must_match_columns() {
+    let ok = with_column(
+        1,
+        json!({ "name": "libelle", "type": "string", "formula": "CONCAT(client.nom, \" \", montant)" }),
+    );
+    assert!(issues(&ok).is_empty(), "{:#?}", issues(&ok));
+
+    let cases = [
+        (
+            json!({ "name": "x", "type": "decimal", "formula": "client.nom" }),
+            "produit un(e) texte",
+        ),
+        (
+            json!({ "name": "x", "type": "decimal", "formula": "montant + client.nom" }),
+            "impossible entre nombre et texte",
+        ),
+        (
+            json!({ "name": "x", "type": "boolean", "formula": "IF(montant, TRUE, FALSE)" }),
+            "booléen attendu, nombre trouvé",
+        ),
+        (
+            json!({ "name": "x", "type": "date", "formula": "livraison + client.nom" }),
+            "impossible entre date et texte",
+        ),
+    ];
+    for (column, fragment) in cases {
+        assert_issue(
+            &with_column(1, column),
+            "tables[1].columns[4].formula",
+            fragment,
+        );
+    }
+    // Agrégat sur une colonne texte, vu depuis la table cible.
+    let mut schema = with_column(1, json!({ "name": "note", "type": "string" }));
+    schema["tables"][0]["columns"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "name": "x", "type": "decimal", "formula": "SUM(commandes.note)" }));
+    assert_issue(
+        &schema,
+        "tables[0].columns[2].formula",
+        "argument 1 de type nombre attendu, texte trouvé",
+    );
+}
+
+#[test]
+fn lookup_types_follow_their_target() {
+    let mut schema = with_column(
+        1,
+        json!({ "name": "categorie", "type": "lookup", "path": "client.categorie" }),
+    );
+    schema["tables"][1]["columns"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "name": "x", "type": "decimal", "formula": "categorie * 2" }));
+    assert_issue(
+        &schema,
+        "tables[1].columns[5].formula",
+        "impossible entre texte et nombre",
+    );
+}
+
+#[test]
+fn condition_types() {
+    let mut schema = base();
+    schema["tables"][1]["rules"] =
+        json!([{ "roles": ["admin"], "actions": ["read"], "when": "montant + 1" }]);
+    assert_issue(&schema, "tables[1].rules[0].when", "booléen attendu");
+    schema["tables"][1]["rules"] =
+        json!([{ "roles": ["admin"], "actions": ["read"], "when": "owner == $user.email" }]);
+    assert_issue(
+        &schema,
+        "tables[1].rules[0].when",
+        "impossible entre nombre et texte",
+    );
+}
+
+#[test]
+fn declared_functions() {
+    let mut schema = with_formula(1, "TVA(montant, $param.tva)");
+    schema["functions"] =
+        json!([{ "name": "TVA", "args": ["number", "number"], "returns": "number" }]);
+    let model = load(&schema).unwrap();
+    assert!(model.functions().get("tva").is_some());
+    assert_eq!(model.functions().missing_implementations(), ["TVA"]);
+
+    schema["functions"][0]["returns"] = json!("text");
+    assert_issue(
+        &schema,
+        "tables[1].columns[4].formula",
+        "produit un(e) texte",
+    );
+
+    schema["functions"] = json!([
+        { "name": "SUM", "args": [], "returns": "number" },
+        { "name": "2X", "args": [], "returns": "number" }
+    ]);
+    assert_issue(&schema, "functions[0].name", "existe déjà");
+    assert_issue(&schema, "functions[1].name", "en commençant par une lettre");
+
+    // Une fonction déclarée volatile est interdite dans une formule persistée.
+    let mut schema = with_column(
+        1,
+        json!({ "name": "x", "type": "decimal", "formula": "COURS()", "persist": true }),
+    );
+    schema["functions"] =
+        json!([{ "name": "COURS", "args": [], "returns": "number", "volatile": true }]);
+    assert_issue(
+        &schema,
+        "tables[1].columns[4].formula",
+        "change avec le temps",
     );
 }

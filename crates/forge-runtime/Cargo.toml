@@ -43,3 +43,7 @@ async-trait = "0.1"
 [[test]]
 name = "auth"
 required-features = ["testing"]
+
+[[test]]
+name = "functions"
+required-features = ["testing"]

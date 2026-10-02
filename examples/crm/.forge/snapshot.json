@@ -131,6 +131,12 @@
           "unique": false
         },
         {
+          "name": "montant_ttc",
+          "storage": "decimal",
+          "nullable": true,
+          "unique": false
+        },
+        {
           "name": "etape",
           "storage": "string",
           "nullable": true,

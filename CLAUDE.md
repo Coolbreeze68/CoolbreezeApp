@@ -38,10 +38,10 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 
 | Crate | Rôle |
 |---|---|
-| `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`. `FunctionRegistry` liste les signatures (arité, agrégat, volatile). Aucune connaissance du schéma. |
+| `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`, `typecheck` (trait `TypeEnv`), `eval` (trait `Env`, sémantique NULL). `FunctionRegistry` : signatures (arité, types, agrégat, volatile) et implémentations (intégrées et personnalisées). Aucune connaissance du schéma. |
 | `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
 | `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
-| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : CRUD générique sur `ForgeEntity`. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`), `check_resources`, `check_rules`. |
+| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : CRUD générique sur `ForgeEntity`. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`), `check_resources`, `check_rules`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 
 Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
@@ -56,7 +56,8 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Régénération sans perte : `src/generated/` et `tests/generated_crud.rs` sont réécrits,
   `src/custom/`, `Cargo.toml`, `main.rs`, `lib.rs` et les migrations jamais.
   Les hooks (`src/custom/hooks/<table>.rs`) sont déclarés par `generated/hooks.rs`
-  via `#[path]`, pour que l'ajout d'une table ne touche aucun fichier utilisateur.
+  via `#[path]`, pour que l'ajout d'une table ne touche aucun fichier utilisateur ;
+  de même pour `src/custom/functions.rs` (fonctions de formule personnalisées).
 - `forge generate` est idempotent (fichier identique = non réécrit).
 - L'app générée dépend de `forge-runtime` par chemin (relatif, ou absolu si les
   chemins n'ont que la racine en commun).
@@ -135,8 +136,20 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Conditions `when` : uniquement colonnes stockées de la table, `$user.id|email`,
   `$param.*`, littéraux et opérateurs, sans fonctions, pour rester traduisibles en SQL.
 - Le schéma du CRM est `examples/crm/forge.json` (le projet de référence est versionné).
-- Formules non persistées et lookups absents des réponses, formules persistées à
-  `NULL` (phase 4).
+- Fonctions personnalisées : déclarées dans `functions` (types des arguments et du
+  résultat), implémentées dans `src/custom/functions.rs` (`App::function`) ;
+  `into_router` échoue si une implémentation manque ou ne correspond à aucune déclaration.
+- Types des formules contrôlés à la validation (seulement si le schéma n'a pas
+  d'autre erreur) ; une date-heure est acceptée là où une date est attendue.
+- Formules non persistées et lookups : évalués à chaque lecture ; un échec
+  d'évaluation donne `null` et est journalisé. Formules persistées : recalculées
+  dans la transaction de l'écriture (lignes touchées trouvées en remontant les
+  chemins de chaque formule, voisinage lu avant et après l'écriture), écrites
+  seulement si la valeur change ; un échec refuse l'écriture (`422`). Un changement
+  de paramètre recalcule toutes les lignes dont une formule persistée le lit.
+- Décimaux calculés arrondis à 4 décimales (demi s'éloignant de zéro), entiers à l'unité.
+- Agrégats : mesures lues depuis `QueryResult` (types variables selon base et
+  fonction) et non via `into_json`, qui perd sous SQLite les colonnes sans type déclaré.
 - Tests sur PostgreSQL/MySQL : base partagée, tests d'un binaire sérialisés par le
   verrou de `TestDatabase`.
 - Migrations : `DataLoss` refusé sans `--allow-destructive` (`Error::Destructive`, rien

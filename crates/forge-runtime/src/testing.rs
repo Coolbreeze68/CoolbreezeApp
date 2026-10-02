@@ -386,6 +386,24 @@ impl Checker {
         record["id"].as_i64().expect("identifiant")
     }
 
+    /// La vue `stats` de la table, si elle existe, est servie par `/aggregate`.
+    async fn check_stats(&mut self, table: &Table) {
+        let Some(view) = &table.views.stats else {
+            return;
+        };
+        let name = &table.name;
+        let mut uri = format!("/api/{name}/aggregate?fields={}", view.fields.join(","));
+        if let Some(group_by) = &view.group_by {
+            uri = format!("{uri}&group_by={group_by}");
+        }
+        let (status, body) = self.send(Method::GET, &uri, None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{name} : agrégats de la vue stats : {body}"
+        );
+    }
+
     async fn check_table(&mut self, model: &Model, table: &Table) {
         let name = &table.name;
         let collection = format!("/api/{name}");
@@ -413,6 +431,13 @@ impl Checker {
             .await;
         assert_eq!(status, StatusCode::CREATED, "{name} : création : {created}");
         assert_matches(table, &payload, &created, "création");
+        for column in table.columns.iter().filter(|c| c.is_computed()) {
+            assert!(
+                created.get(&column.name).is_some(),
+                "{name} : colonne calculée `{}` absente",
+                column.name
+            );
+        }
         let id = created["id"].as_i64().expect("identifiant");
         let item = format!("{collection}/{id}");
 
@@ -438,6 +463,8 @@ impl Checker {
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{name} : liste triée : {list}");
+
+        self.check_stats(table).await;
 
         let changes = self.sample(model, table, 0).await;
         let (status, updated) = self

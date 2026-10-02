@@ -65,11 +65,11 @@ jobs:
         run: ./scripts/e2e-evolution.sh
         env:
           DATABASE_URL: ${{ matrix.url }}
-      - name: Migrations et authentification (runtime)
-        run: cargo test -p forge-runtime --all-features --test migration --test auth
+      - name: Migrations, authentification et fonctions (runtime)
+        run: cargo test -p forge-runtime --all-features --test migration --test auth --test functions
         env:
           TEST_DATABASE_URL: ${{ matrix.url }}
-      - name: CRUD du CRM
+      - name: CRUD, règles et formules du CRM
         run: cargo test -p mini_crm
         env:
           TEST_DATABASE_URL: ${{ matrix.url }}

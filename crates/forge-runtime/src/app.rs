@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::{Router, middleware};
+use forge_formula::{FunctionRegistry, Value};
 use forge_schema::Model;
 use sea_orm::DatabaseConnection;
 
@@ -19,6 +20,8 @@ pub struct AppState {
     pub(crate) db: DatabaseConnection,
     pub(crate) model: Arc<Model>,
     pub(crate) auth: Arc<AuthConfig>,
+    /// Fonctions de formule, implémentations comprises.
+    pub(crate) functions: Arc<FunctionRegistry>,
 }
 
 impl AppState {
@@ -43,13 +46,19 @@ pub struct App {
     model: Arc<Model>,
     tables: BTreeSet<String>,
     router: Router<AppState>,
+    functions: FunctionRegistry,
+    /// Erreurs d'enregistrement de fonctions, rapportées au démarrage.
+    errors: Vec<String>,
 }
 
 impl App {
     /// `schema` : contenu de `forge.json`, embarqué par le code généré.
     pub fn new(schema: &str) -> Result<Self, Error> {
+        let model = Model::from_json(schema)?;
         Ok(Self {
-            model: Arc::new(Model::from_json(schema)?),
+            functions: model.functions().clone(),
+            errors: Vec::new(),
+            model: Arc::new(model),
             tables: BTreeSet::new(),
             router: parameters::router().merge(auth::router()),
         })
@@ -66,6 +75,26 @@ impl App {
         let (table, router) = resource::router::<E, H>(H::default());
         self.tables.insert(table);
         self.router = self.router.merge(router);
+        self
+    }
+
+    /// Implémente une fonction de formule déclarée dans le schéma (`functions`).
+    ///
+    /// ```ignore
+    /// app.function("TVA", |args| match args {
+    ///     [Value::Number(montant)] => Ok(Value::Number(montant * Decimal::new(2, 1))),
+    ///     _ => Ok(Value::Null),
+    /// })
+    /// ```
+    #[must_use]
+    pub fn function(
+        mut self,
+        name: &str,
+        implementation: impl Fn(&[Value]) -> Result<Value, String> + Send + Sync + 'static,
+    ) -> Self {
+        if let Err(message) = self.functions.implement(name, implementation) {
+            self.errors.push(message);
+        }
         self
     }
 
@@ -99,6 +128,20 @@ impl App {
                 missing.join(", ")
             )));
         }
+        let mut errors = self.errors;
+        errors.extend(
+            self.functions
+                .missing_implementations()
+                .into_iter()
+                .map(|name| {
+                    format!(
+                        "fonction `{name}` déclarée mais non implémentée (src/custom/functions.rs)"
+                    )
+                }),
+        );
+        if !errors.is_empty() {
+            return Err(Error::Config(errors.join(" ; ")));
+        }
         parameters::seed(&db, &self.model.spec().parameters).await?;
         auth::users::seed_roles(&db, &self.model.spec().roles).await?;
         auth::users::ensure_initial_admin(&db, auth.initial_admin.as_ref()).await?;
@@ -106,6 +149,7 @@ impl App {
             db,
             model: self.model,
             auth: Arc::new(auth),
+            functions: Arc::new(self.functions),
         };
         Ok(self
             .router

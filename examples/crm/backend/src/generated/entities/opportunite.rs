@@ -14,6 +14,7 @@ pub struct Model {
     pub montant: Decimal,
     pub probabilite: Option<i64>,
     pub montant_pondere: Option<Decimal>,
+    pub montant_ttc: Option<Decimal>,
     pub etape: Option<String>,
     pub date_cloture: Option<Date>,
     #[sea_orm(column_type = "Text")]

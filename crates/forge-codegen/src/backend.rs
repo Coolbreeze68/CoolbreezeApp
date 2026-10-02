@@ -103,6 +103,10 @@ impl Backend<'_> {
             once("backend/src/lib.rs", "backend/lib.rs")?,
             once("backend/src/custom/mod.rs", "backend/custom_mod.rs")?,
             once("backend/src/custom/routes.rs", "backend/custom_routes.rs")?,
+            once(
+                "backend/src/custom/functions.rs",
+                "backend/custom_functions.rs",
+            )?,
             once(".gitignore", "backend/gitignore")?,
             generated("backend/src/generated/mod.rs", "backend/generated_mod.rs")?,
             generated(

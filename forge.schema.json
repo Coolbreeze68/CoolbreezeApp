@@ -222,6 +222,62 @@
         }
       ]
     },
+    "FormulaType": {
+      "description": "Type d'une valeur de formule.",
+      "oneOf": [
+        {
+          "enum": [
+            "text",
+            "boolean",
+            "date",
+            "datetime"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "number",
+          "description": "Entier, décimal ou durée.",
+          "type": "string"
+        },
+        {
+          "const": "any",
+          "description": "N'importe quel type.",
+          "type": "string"
+        }
+      ]
+    },
+    "FunctionDecl": {
+      "additionalProperties": false,
+      "description": "Fonction de formule personnalisée : signature vérifiée par forge,\nimplémentation fournie par l'application.",
+      "properties": {
+        "args": {
+          "description": "Type de chaque argument.",
+          "items": {
+            "$ref": "#/$defs/FormulaType"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Nom, en majuscules par convention (`TVA`).",
+          "type": "string"
+        },
+        "returns": {
+          "$ref": "#/$defs/FormulaType",
+          "description": "Type du résultat."
+        },
+        "volatile": {
+          "default": false,
+          "description": "Le résultat dépend d'autre chose que des arguments (date du jour, service\nexterne…) : la fonction est alors interdite dans les formules persistées.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "args",
+        "returns"
+      ],
+      "type": "object"
+    },
     "Label": {
       "anyOf": [
         {
@@ -402,6 +458,13 @@
     },
     "app": {
       "$ref": "#/$defs/App"
+    },
+    "functions": {
+      "description": "Fonctions de formule personnalisées, implémentées dans `src/custom/functions.rs`.",
+      "items": {
+        "$ref": "#/$defs/FunctionDecl"
+      },
+      "type": "array"
     },
     "parameters": {
       "description": "Paramètres globaux, éditables par l'admin et lisibles dans les formules via `$param.nom`.",

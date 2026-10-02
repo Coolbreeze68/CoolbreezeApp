@@ -19,15 +19,14 @@ n'est jamais écrasé par une régénération.
 | 1 | Backend : entités, migration initiale, CRUD REST (pagination, tri, filtres), `parameters`, hooks, routes personnalisées ; SQLite, PostgreSQL, MySQL | ✅ |
 | 2 | Migrations incrémentales : diff du schéma, renommages, protection des changements destructifs, retour arrière | ✅ |
 | 3 | Authentification JWT, comptes et rôles, règles d'autorisation (conditions traduites en SQL) | ✅ |
-| 4 | Évaluation des formules, lookups, `persist`, agrégats | à venir |
+| 4 | Évaluation des formules, lookups, `persist`, fonctions personnalisées, endpoint d'agrégats | ✅ |
 | 5 | GraphQL, import/export CSV, OpenAPI | à venir |
 | 6 | Observabilité, cache | à venir |
 | 7 | Application Flutter | à venir |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Ce qui n'est **pas encore** disponible (phases suivantes) : le calcul des formules
-et des lookups (absents des réponses), GraphQL, CSV, OpenAPI, l'application Flutter
-et Docker.
+Ce qui n'est **pas encore** disponible (phases suivantes) : GraphQL, CSV, OpenAPI,
+l'application Flutter et Docker.
 
 ## Installation
 
@@ -186,7 +185,34 @@ pub fn routes() -> Router<AppState> {
 }
 ```
 
-### 6. Tester
+### 6. Ajouter une fonction de formule
+
+Déclarez la fonction dans `forge.json`, puis implémentez-la dans
+`backend/src/custom/functions.rs` (créé une fois, jamais réécrit) :
+
+```json
+"functions": [{ "name": "REMISE", "args": ["number", "number"], "returns": "number" }]
+```
+
+```rust
+use forge_runtime::formula::{Decimal, Value};
+
+pub fn register(app: App) -> App {
+    app.function("REMISE", |args| match args {
+        [Value::Number(montant), Value::Number(taux)] => {
+            Ok(Value::Number(*montant * (Decimal::ONE - *taux / Decimal::ONE_HUNDRED)))
+        }
+        _ => Ok(Value::Null),
+    })
+}
+```
+
+La validation contrôle les appels (nombre et types des arguments) ; l'application
+refuse de démarrer si une fonction déclarée n'est pas implémentée. Une erreur
+renvoyée (`Err("message")`) refuse l'écriture (`422`) pour une formule persistée,
+et donne `null` (journalisé) pour une formule calculée à la lecture.
+
+### 7. Tester
 
 ```bash
 cargo test                                            # SQLite en mémoire
@@ -199,9 +225,10 @@ création de chaque rôle. Pour vos propres tests, `forge_runtime::testing::Test
 envoie des requêtes à l'application sans réseau, connecté en administrateur ;
 `as_new_user` crée un compte avec les rôles voulus. Exemples :
 [`tests/hooks.rs`](examples/crm/backend/tests/hooks.rs) et
-[`tests/rules.rs`](examples/crm/backend/tests/rules.rs) (règle `owner == $user.id`).
+[`tests/rules.rs`](examples/crm/backend/tests/rules.rs) (règle `owner == $user.id`),
+[`tests/formulas.rs`](examples/crm/backend/tests/formulas.rs) (formules et agrégats).
 
-### 7. Faire évoluer le schéma
+### 8. Faire évoluer le schéma
 
 Ajoutons une colonne `effectif` aux entreprises et renommons `ville` en `commune`
 dans `forge.json` :
@@ -254,6 +281,7 @@ remplissent les lignes existantes quand une colonne est ajoutée.
 | `GET` | `/api/<table>` | Liste : `{ "data": [...], "page", "per_page", "total" }` |
 | `POST` | `/api/<table>` | Création → `201` |
 | `GET` | `/api/<table>/{id}` | Lecture |
+| `GET` | `/api/<table>/aggregate` | Agrégats (voir plus bas) |
 | `PATCH` | `/api/<table>/{id}` | Modification partielle |
 | `DELETE` | `/api/<table>/{id}` | Suppression → `204` |
 | `GET` | `/api/parameters` | Paramètres et leurs valeurs |
@@ -273,6 +301,26 @@ Seules les colonnes stockées (dont `id`, `owner`, `created_at`, `updated_at`) s
 filtrables et triables. Formats JSON : décimaux en texte (`"12.50"`, nombres acceptés
 en entrée), dates `AAAA-MM-JJ`, dates-heures RFC 3339, durées en secondes,
 `reference` = identifiant, `reference_list` = liste d'identifiants.
+
+Colonnes calculées : les formules non persistées et les lookups sont évalués à
+chaque lecture ; les formules persistées sont stockées et recalculées dans la
+transaction de l'écriture qui les affecte, y compris dans les autres tables
+(`entreprise.pipeline` quand une opportunité change, est déplacée ou supprimée) et
+quand un paramètre qu'elles lisent est modifié. Elles sont donc filtrables et
+triables, et utilisables dans les agrégats.
+
+Agrégats : `GET /api/opportunite/aggregate?fields=montant,montant_pondere&group_by=etape`
+renvoie `count` et, pour chaque colonne de `fields` (numérique, stockée),
+`sum`, `avg`, `min`, `max` (décimaux en texte), par groupe et au total :
+
+```json
+{ "fields": ["montant"], "group_by": "etape",
+  "groups": [{ "key": "gagne", "count": 2, "montant": { "sum": "4000", "avg": "2000", "min": "1000", "max": "3000" } }],
+  "total": { "count": 4, "montant": { … } } }
+```
+
+`group_by` est facultatif (colonne stockée, sauf `text`). Les filtres et la
+recherche de liste s'appliquent, ainsi que le périmètre de lecture de l'utilisateur.
 
 Codes d'erreur : `400` requête mal formée, `401` non authentifié, `403` non autorisé,
 `404` introuvable, `409` conflit (valeur
@@ -351,6 +399,7 @@ Exemple complet : [`examples/crm/forge.json`](examples/crm/forge.json).
 | `app` | `name` (identifiant), `default_locale`, `locales` (ex. `["fr", "en"]`). |
 | `roles` | Rôles utilisateurs. `admin` est obligatoire. |
 | `parameters` | Paramètres globaux typés (`name`, `type`, `default`, `label`), lisibles dans les formules via `$param.nom`. |
+| `functions` | Fonctions de formule implémentées en Rust : `name`, `args` et `returns` (`number`, `text`, `boolean`, `date`, `datetime`, `any`), `volatile` (résultat non déterministe : interdite dans `persist`). |
 | `tables` | Tables métier. |
 
 Les identifiants (tables, colonnes, rôles, valeurs d'enum) sont en `snake_case`,
@@ -417,11 +466,19 @@ SUM(opportunites.montant)      COUNT(tags)
 - Opérateurs : `+ - * /`, `== != < <= > >=` (alias `=` et `<>`), `AND OR NOT`.
 - Littéraux : nombres, `"texte"`, `TRUE`, `FALSE`, `NULL`.
 - Références : colonne (`montant`), chemin de références (`entreprise.secteur`), paramètre (`$param.tva`).
-- Fonctions : `IF`, `ROUND`, `CONCAT`, `DAYS_BETWEEN`, `TODAY`.
+- Fonctions : `IF`, `ROUND`, `CONCAT`, `DAYS_BETWEEN(début, fin)`, `TODAY`, et celles de `functions`.
 - Agrégats sur une relation « plusieurs » (inverse ou `reference_list`) : `SUM`, `AVG`, `MIN`, `MAX`, `COUNT`.
 
 La validation vérifie la syntaxe, l'existence des colonnes et des relations,
-l'usage des agrégats, et détecte les dépendances circulaires (y compris entre tables).
+l'usage des agrégats, les types (le résultat d'une formule doit correspondre au type
+de sa colonne, les arguments à la signature des fonctions) et détecte les
+dépendances circulaires (y compris entre tables).
+
+À l'évaluation, `NULL` se propage (`NULL + 1` vaut `NULL`, `AND`/`OR` suivent la
+logique à trois valeurs), une division par zéro donne `NULL`, les agrégats ignorent
+les `NULL` (`SUM` d'un ensemble vide vaut 0). Une date plus ou moins un nombre
+décale de ce nombre de jours. Les résultats sont arrondis à 4 décimales pour un
+`decimal`, à l'entier pour un `integer`.
 
 ### Règles d'autorisation
 
@@ -439,9 +496,9 @@ de la table, des comparaisons et `AND`/`OR`/`NOT`, sans fonctions.
 ```text
 crates/
 ├── forge-schema/   format d'entrée : types serde, validation, modèle résolu, valeurs typées, JSON Schema
-├── forge-formula/  langage de formules : lexer, parser, AST, registre de fonctions
+├── forge-formula/  langage de formules : lexer, parser, AST, typage, évaluation, registre de fonctions
 ├── forge-codegen/  génération : structure de stockage, diff et migrations, templates, écriture idempotente
-├── forge-runtime/  logique des apps générées : CRUD générique, filtres, hooks, exécution des migrations, CLI
+├── forge-runtime/  logique des apps générées : CRUD générique, filtres, agrégats, calcul des formules, auth, hooks, migrations, CLI
 └── forge-cli/      binaire `forge`
 templates/backend/  templates minijinja, embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)
@@ -450,7 +507,7 @@ scripts/            scénario de bout en bout (évolution du schéma)
 
 Le backend généré embarque son schéma (`src/generated/forge.json`) : `forge-runtime`
 le relit au démarrage et en tire tout le comportement générique (validation des
-corps, filtres, valeurs par défaut, liens N↔N, paramètres). Le code généré se
+corps, filtres, valeurs par défaut, liens N↔N, paramètres, formules). Le code généré se
 limite aux entités sea-orm typées, à la migration et au branchement des hooks.
 
 ## Développement

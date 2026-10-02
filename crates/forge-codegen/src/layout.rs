@@ -163,6 +163,7 @@ mod tests {
                 "montant",
                 "probabilite",
                 "montant_pondere",
+                "montant_ttc",
                 "etape",
                 "date_cloture",
                 "notes_internes"

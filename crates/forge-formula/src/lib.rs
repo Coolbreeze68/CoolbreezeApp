@@ -1,7 +1,8 @@
 //! Langage de formules de forge.
 //!
 //! Utilisé pour les colonnes calculées (`formula`) et pour les conditions
-//! des règles d'autorisation (`when`).
+//! des règles d'autorisation (`when`) : analyse ([`parse`]), vérification des
+//! types ([`typecheck`]) et évaluation ([`evaluate`]).
 //!
 //! ```
 //! use forge_formula::{parse, ExprKind};
@@ -12,12 +13,20 @@
 
 mod ast;
 mod error;
+mod eval;
 mod functions;
 mod lexer;
 mod parser;
+mod typecheck;
+mod value;
 
 pub use ast::{BinaryOp, Expr, ExprKind, Span, UnaryOp, VarScope};
 pub use error::ParseError;
-pub use functions::{Arity, FunctionKind, FunctionRegistry, FunctionSignature};
+pub use eval::{Env, EvalError, evaluate};
+pub use functions::{
+    Arity, FunctionKind, FunctionRegistry, FunctionSignature, Implementation, Returns,
+};
 pub use lexer::KEYWORDS;
 pub use parser::parse;
+pub use typecheck::{TypeEnv, TypeError, typecheck};
+pub use value::{Type, Value};

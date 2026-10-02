@@ -22,7 +22,54 @@ pub struct Spec {
     /// Paramètres globaux, éditables par l'admin et lisibles dans les formules via `$param.nom`.
     #[serde(default)]
     pub parameters: Vec<Parameter>,
+    /// Fonctions de formule personnalisées, implémentées dans `src/custom/functions.rs`.
+    #[serde(default)]
+    pub functions: Vec<FunctionDecl>,
     pub tables: Vec<Table>,
+}
+
+/// Fonction de formule personnalisée : signature vérifiée par forge,
+/// implémentation fournie par l'application.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FunctionDecl {
+    /// Nom, en majuscules par convention (`TVA`).
+    pub name: String,
+    /// Type de chaque argument.
+    pub args: Vec<FormulaType>,
+    /// Type du résultat.
+    pub returns: FormulaType,
+    /// Le résultat dépend d'autre chose que des arguments (date du jour, service
+    /// externe…) : la fonction est alors interdite dans les formules persistées.
+    #[serde(default)]
+    pub volatile: bool,
+}
+
+/// Type d'une valeur de formule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FormulaType {
+    /// Entier, décimal ou durée.
+    Number,
+    Text,
+    Boolean,
+    Date,
+    Datetime,
+    /// N'importe quel type.
+    Any,
+}
+
+impl From<FormulaType> for forge_formula::Type {
+    fn from(ty: FormulaType) -> Self {
+        match ty {
+            FormulaType::Number => Self::Number,
+            FormulaType::Text => Self::Text,
+            FormulaType::Boolean => Self::Boolean,
+            FormulaType::Date => Self::Date,
+            FormulaType::Datetime => Self::DateTime,
+            FormulaType::Any => Self::Any,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -121,6 +168,20 @@ impl ColumnType {
     }
 
     /// Type stockant une valeur simple (ni relation, ni lookup).
+    /// Type des valeurs de ce type de colonne dans une formule (`Any` pour un lookup,
+    /// dont le type est celui de la colonne visée).
+    pub fn formula_type(self) -> forge_formula::Type {
+        use forge_formula::Type;
+        match self {
+            Self::String | Self::Text | Self::Enum => Type::Text,
+            Self::Integer | Self::Decimal | Self::Duration | Self::Reference => Type::Number,
+            Self::Boolean => Type::Boolean,
+            Self::Date => Type::Date,
+            Self::Datetime => Type::DateTime,
+            Self::ReferenceList | Self::Lookup => Type::Any,
+        }
+    }
+
     pub fn is_scalar(self) -> bool {
         !matches!(
             self,

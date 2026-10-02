@@ -13,7 +13,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use forge_schema::spec::{Label, Parameter};
 use forge_schema::value;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, EntityTrait};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, EntityTrait, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -23,6 +23,7 @@ use forge_schema::spec::ColumnType;
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;
+use crate::compute::{self, Changes};
 use crate::error::Error;
 
 pub(crate) mod entity {
@@ -152,11 +153,21 @@ async fn write(
     let param = declared(&state, &name)?;
     value::from_json(param.ty, None, &body.value).map_err(|msg| Error::validation("value", msg))?;
     let stored = entity::ActiveModel {
-        name: Set(name),
+        name: Set(name.clone()),
         value: Set(Some(body.value.to_string())),
         updated_at: Set(chrono::Utc::now()),
     };
     // Le paramètre existe toujours : `seed` le crée au démarrage.
-    let stored = stored.update(&state.db).await?;
+    let txn = state.db.begin().await?;
+    let stored = stored.update(&txn).await?;
+    // Les formules persistées qui lisent ce paramètre sont recalculées.
+    compute::propagate(
+        &txn,
+        &state.model,
+        &state.functions,
+        Changes::parameter(&name),
+    )
+    .await?;
+    txn.commit().await?;
     Ok(Json(to_json(param, Some(&stored))))
 }

@@ -69,7 +69,7 @@
         { "name": "probabilite", "type": "integer", "default": 50, "label": { "fr": "Probabilité (%)", "en": "Probability (%)" } },
         { "name": "montant_pondere", "type": "decimal", "formula": "montant * probabilite / 100", "persist": true,
           "label": { "fr": "Montant pondéré", "en": "Weighted amount" } },
-        { "name": "montant_ttc", "type": "decimal", "formula": "ROUND(montant * (1 + $param.tva / 100), 2)",
+        { "name": "montant_ttc", "type": "decimal", "formula": "ROUND(montant * (1 + $param.tva / 100), 2)", "persist": true,
           "label": { "fr": "Montant TTC", "en": "Amount incl. VAT" } },
         { "name": "etape", "type": "enum", "values": ["prospect", "proposition", "gagne", "perdu"], "default": "prospect",
           "label": { "fr": "Étape", "en": "Stage" } },

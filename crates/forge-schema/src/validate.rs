@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use forge_formula::{Expr, ExprKind, FunctionKind, FunctionRegistry, VarScope};
+use forge_formula::{
+    Expr, ExprKind, FunctionKind, FunctionRegistry, FunctionSignature, Type, TypeEnv, VarScope,
+};
 
 use crate::error::{Issue, SchemaError};
 use crate::graph;
@@ -15,17 +17,18 @@ use crate::names::{SYSTEM_COLUMNS, SYSTEM_TABLES, USER_FIELDS, check_identifier,
 use crate::spec::{Action, Column, ColumnType, Label, Spec, Table};
 
 pub(crate) fn validate(spec: Spec) -> Result<Model, SchemaError> {
-    let registry = FunctionRegistry::builtin();
+    let (registry, mut issues) = declare_functions(&spec);
     let mut validator = Validator::new(&spec, &registry);
     validator.run();
+    issues.append(&mut validator.issues);
 
     let Validator {
-        issues,
         relations,
         formulas,
         lookups,
         conditions,
         computed_order,
+        dependencies,
         ..
     } = validator;
     if !issues.is_empty() {
@@ -38,7 +41,50 @@ pub(crate) fn validate(spec: Spec) -> Result<Model, SchemaError> {
         lookups,
         conditions,
         computed_order,
+        dependencies,
+        functions: registry,
     })
+}
+
+/// Fonctions intégrées, plus celles déclarées dans `functions`.
+fn declare_functions(spec: &Spec) -> (FunctionRegistry, Vec<Issue>) {
+    let mut registry = FunctionRegistry::builtin();
+    let mut issues = Vec::new();
+    for (i, decl) in spec.functions.iter().enumerate() {
+        let path = format!("functions[{i}].name");
+        let well_formed = decl
+            .name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+            && decl
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !well_formed {
+            issues.push(Issue::new(
+                path,
+                format!(
+                    "`{}` : lettres, chiffres et `_`, en commençant par une lettre",
+                    decl.name
+                ),
+            ));
+        } else if registry.get(&decl.name).is_some() {
+            issues.push(Issue::new(
+                path,
+                format!(
+                    "la fonction `{}` existe déjà",
+                    decl.name.to_ascii_uppercase()
+                ),
+            ));
+        } else {
+            let params = decl.args.iter().map(|a| (*a).into()).collect();
+            let mut signature = FunctionSignature::scalar(&decl.name, params, decl.returns.into());
+            signature.volatile = decl.volatile;
+            registry.declare(signature);
+        }
+    }
+    (registry, issues)
 }
 
 /// Une colonne vue par la résolution de chemins : métier ou système.
@@ -143,6 +189,9 @@ impl<'a> Validator<'a> {
         self.check_views();
         self.check_rules();
         self.check_cycles();
+        if self.issues.is_empty() {
+            self.check_types();
+        }
     }
 
     // ---------------------------------------------------------------- app
@@ -903,6 +952,66 @@ impl<'a> Validator<'a> {
         self.computed_order = sorted.order;
     }
 
+    // -------------------------------------------------------------- types
+
+    /// Types des formules (compatibles avec leur colonne) et des conditions (booléennes).
+    /// Exécuté seulement sur un schéma sans autre erreur : les références sont résolues.
+    fn check_types(&mut self) {
+        let mut errors = Vec::new();
+        for (column, expr) in &self.formulas {
+            let env = Types {
+                validator: self,
+                table: &column.table,
+            };
+            let declared = self
+                .field(&column.table, &column.column)
+                .map_or(Type::Any, |f| f.ty().formula_type());
+            let path = self.column_path(column);
+            match forge_formula::typecheck(expr, &env, self.registry) {
+                Ok(ty) if !ty.fits(declared) => errors.push((
+                    path,
+                    format!(
+                        "la formule produit un(e) {ty}, la colonne `{}` attend un(e) {declared}",
+                        column.column
+                    ),
+                )),
+                Ok(_) => {}
+                Err(type_errors) => errors.extend(type_errors.into_iter().map(|e| {
+                    (
+                        path.clone(),
+                        format!("{} (position {})", e.message, e.span.start),
+                    )
+                })),
+            }
+        }
+        for ((table, index), expr) in &self.conditions {
+            let env = Types {
+                validator: self,
+                table,
+            };
+            let (i, _) = self.tables[table.as_str()];
+            let path = format!("tables[{i}].rules[{index}].when");
+            match forge_formula::typecheck(expr, &env, self.registry) {
+                Ok(ty) if !ty.fits(Type::Boolean) => {
+                    errors.push((
+                        path,
+                        format!("la condition produit un(e) {ty}, booléen attendu"),
+                    ));
+                }
+                Ok(_) => {}
+                Err(type_errors) => errors.extend(type_errors.into_iter().map(|e| {
+                    (
+                        path.clone(),
+                        format!("{} (position {})", e.message, e.span.start),
+                    )
+                })),
+            }
+        }
+        for (path, message) in errors {
+            self.error(path, message);
+        }
+    }
+
     fn column_path(&self, column: &ColumnRef) -> String {
         let Some((i, table)) = self.tables.get(column.table.as_str()) else {
             return String::new();
@@ -1105,6 +1214,56 @@ impl ExprCheck<'_, '_> {
             | Err(None) => {}
             Err(Some(msg)) => self.error(arg, msg),
         }
+    }
+}
+
+/// Types des chemins et variables vus depuis une table.
+struct Types<'v, 'a> {
+    validator: &'v Validator<'a>,
+    table: &'v str,
+}
+
+impl Types<'_, '_> {
+    fn end_type(&self, path: &[String]) -> Type {
+        let table = self
+            .validator
+            .tables
+            .get(self.table)
+            .map(|(_, t)| t.name.as_str());
+        match table.map(|t| self.validator.resolve(t, path)) {
+            Some(Ok(Resolved {
+                end: End::Column(owner),
+                ..
+            })) => self
+                .validator
+                .effective_type(&owner)
+                .map_or(Type::Any, ColumnType::formula_type),
+            _ => Type::Any,
+        }
+    }
+}
+
+impl TypeEnv for Types<'_, '_> {
+    fn path_type(&self, path: &[String]) -> Type {
+        self.end_type(path)
+    }
+
+    fn variable_type(&self, scope: VarScope, path: &[String]) -> Type {
+        match scope {
+            VarScope::User if path[0] == "id" => Type::Number,
+            VarScope::User => Type::Text,
+            VarScope::Param => self
+                .validator
+                .spec
+                .parameters
+                .iter()
+                .find(|p| p.name == path[0])
+                .map_or(Type::Any, |p| p.ty.formula_type()),
+        }
+    }
+
+    fn collection_type(&self, path: &[String]) -> Type {
+        self.end_type(path)
     }
 }
 

@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use forge_formula::Expr;
+use forge_formula::{Expr, FunctionRegistry};
 
 use crate::error::{Issue, SchemaError};
 use crate::spec::{Column, Spec, Table};
@@ -65,6 +65,8 @@ pub struct Model {
     pub(crate) lookups: BTreeMap<ColumnRef, Vec<String>>,
     pub(crate) conditions: BTreeMap<(String, usize), Expr>,
     pub(crate) computed_order: Vec<ColumnRef>,
+    pub(crate) dependencies: BTreeMap<ColumnRef, BTreeSet<ColumnRef>>,
+    pub(crate) functions: FunctionRegistry,
 }
 
 impl Model {
@@ -122,6 +124,17 @@ impl Model {
     /// AST de la condition `when` de la règle `rule_index` de `table`.
     pub fn condition(&self, table: &str, rule_index: usize) -> Option<&Expr> {
         self.conditions.get(&(table.to_owned(), rule_index))
+    }
+
+    /// Colonnes lues par une colonne calculée (au bout de chacun de ses chemins).
+    pub fn dependencies(&self, column: &ColumnRef) -> Option<&BTreeSet<ColumnRef>> {
+        self.dependencies.get(column)
+    }
+
+    /// Fonctions intégrées et déclarées (signatures ; les fonctions déclarées
+    /// restent à implémenter par l'application).
+    pub fn functions(&self) -> &FunctionRegistry {
+        &self.functions
     }
 
     /// Colonnes calculées (formules et lookups) triées de sorte que chacune
