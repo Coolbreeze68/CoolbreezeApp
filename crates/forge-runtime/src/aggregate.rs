@@ -41,8 +41,13 @@ pub(crate) struct AggregateQuery {
 
 impl AggregateQuery {
     pub(crate) fn parse(table: &Table, raw: Option<&str>) -> Result<Self, Error> {
+        Self::from_pairs(table, pairs(raw)?)
+    }
+
+    /// Comme [`Self::parse`], sur des paires déjà décodées.
+    pub(crate) fn from_pairs(table: &Table, pairs: Vec<(String, String)>) -> Result<Self, Error> {
         let (mut fields, mut group_by, mut rest) = (None, None, Vec::new());
-        for (key, value) in pairs(raw)? {
+        for (key, value) in pairs {
             match key.as_str() {
                 "fields" => fields = Some(value),
                 "group_by" => group_by = Some(value),

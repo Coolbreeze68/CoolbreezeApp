@@ -1,0 +1,27 @@
+//! Résolveurs GraphQL personnalisés. Ce fichier vous appartient : forge ne le modifie jamais.
+//!
+//! Le schéma GraphQL (`/api/graphql`, éditeur sur `/graphql`) est construit à partir
+//! de `forge.json`. Ajoutez-y vos champs avec `graphql_query` et `graphql_mutation` ;
+//! un résolveur lit l'état de l'application (`AppState`) et l'utilisateur connecté
+//! (`CurrentUser`) dans son contexte.
+//!
+//! ```ignore
+//! use forge_runtime::CurrentUser;
+//! use forge_runtime::async_graphql::dynamic::{Field, FieldFuture, FieldValue, TypeRef};
+//!
+//! pub fn register(app: App) -> App {
+//!     app.graphql_query(Field::new("bonjour", TypeRef::named_nn(TypeRef::STRING), |ctx| {
+//!         FieldFuture::new(async move {
+//!             let user = ctx.data::<CurrentUser>()?;
+//!             Ok(Some(FieldValue::value(format!("Bonjour {}", user.email))))
+//!         })
+//!     }))
+//! }
+//! ```
+
+use forge_runtime::App;
+
+/// Ajoute à l'application les champs GraphQL personnalisés.
+pub fn register(app: App) -> App {
+    app
+}

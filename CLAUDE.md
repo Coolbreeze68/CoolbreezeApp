@@ -39,9 +39,9 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 | Crate | Rôle |
 |---|---|
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`, `typecheck` (trait `TypeEnv`), `eval` (trait `Env`, sémantique NULL). `FunctionRegistry` : signatures (arité, types, agrégat, volatile) et implémentations (intégrées et personnalisées). Aucune connaissance du schéma. |
-| `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
+| `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `graphql` : noms GraphQL dérivés des tables et détection de leurs conflits. `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
 | `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
-| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : CRUD générique sur `ForgeEntity`. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`), `check_resources`, `check_rules`. |
+| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : trait `Service` (opérations d'une table, indépendantes du transport : liste, lecture, agrégats, écriture, import) implémenté par `Resource<E, H>` pour chaque entité. `rest`, `graphql` (schéma dynamique, `DataLoader` des références) et `csv_io` n'appellent que `Service`. `openapi` : document OpenAPI écrit en JSON depuis le modèle, chargé dans `utoipa` et servi par Swagger UI. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`, `graphql`, `request_text`), `check_resources` (CRUD REST, aller-retour CSV, GraphQL), `check_rules`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 
 Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
@@ -57,7 +57,10 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
   `src/custom/`, `Cargo.toml`, `main.rs`, `lib.rs` et les migrations jamais.
   Les hooks (`src/custom/hooks/<table>.rs`) sont déclarés par `generated/hooks.rs`
   via `#[path]`, pour que l'ajout d'une table ne touche aucun fichier utilisateur ;
-  de même pour `src/custom/functions.rs` (fonctions de formule personnalisées).
+  de même pour `src/custom/functions.rs` et `src/custom/graphql.rs`.
+- Les hooks, les fonctions (`src/custom/functions.rs`) et les champs GraphQL
+  (`src/custom/graphql.rs`, `App::graphql_query|graphql_mutation|graphql_type`)
+  sont les points d'extension du code utilisateur.
 - `forge generate` est idempotent (fichier identique = non réécrit).
 - L'app générée dépend de `forge-runtime` par chemin (relatif, ou absolu si les
   chemins n'ont que la racine en commun).
@@ -150,6 +153,24 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Décimaux calculés arrondis à 4 décimales (demi s'éloignant de zéro), entiers à l'unité.
 - Agrégats : mesures lues depuis `QueryResult` (types variables selon base et
   fonction) et non via `into_json`, qui perd sous SQLite les colonnes sans type déclaré.
+- REST, GraphQL et CSV passent par `Service` : toute règle métier (validation,
+  autorisation, hooks, calculs) se code une fois, dans `resource.rs` ou en dessous.
+  Ne pas convertir une erreur du runtime en erreur GraphQL par `?` (conversion
+  `Display` d'async-graphql : code perdu, erreur interne exposée) : `to_graphql`.
+- GraphQL : schéma dynamique construit dans `App::into_router` ; un `DataLoader` par
+  requête charge les références par lots (`Service::read_many`, droits de
+  l'utilisateur ; cible illisible → `null`). `ID` en texte, `Decimal`/`Date`/
+  `DateTime`/`JSON` en scalaires, `enum` en énumération GraphQL. Arguments de liste
+  convertis en paires de requête REST (mêmes validations). Auth et comptes : REST seul.
+- CSV : import tout ou rien, une transaction et un point de sauvegarde par ligne
+  (une erreur SQL n'interrompt pas la vérification des lignes suivantes) ; erreur
+  interne → arrêt immédiat. `Error::Import(Vec<RowError>)` → `422`, `error.lines`.
+  Cellule vide : omise en création (défaut), `null` en modification.
+- OpenAPI : JSON désérialisé dans `utoipa::openapi::OpenApi` (chaque schéma doit
+  avoir un `type`, chaque paramètre `required`) ; Swagger UI embarqué (`vendored`).
+  `/docs`, `/openapi.json` et `/graphql` (GraphiQL) sont hors de `/api/`, donc publics.
+- Décimaux renvoyés normalisés (`"500"`, pas `"500.0000"` sous PostgreSQL/MySQL).
+- `rust-version` 1.88 (exigé par utoipa-swagger-ui) : let-chains utilisables.
 - Tests sur PostgreSQL/MySQL : base partagée, tests d'un binaire sérialisés par le
   verrou de `TestDatabase`.
 - Migrations : `DataLoss` refusé sans `--allow-destructive` (`Error::Destructive`, rien

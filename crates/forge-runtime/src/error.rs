@@ -18,6 +18,9 @@ pub type FieldErrors = BTreeMap<String, Vec<String>>;
 pub enum Error {
     #[error("données invalides")]
     Validation(FieldErrors),
+    /// Import refusé : une erreur par ligne en échec (voir [`Error::body`]).
+    #[error("import refusé : {} ligne(s) en erreur, aucune donnée enregistrée", .0.len())]
+    Import(Vec<RowError>),
     #[error("requête invalide : {0}")]
     BadRequest(String),
     #[error("authentification requise")]
@@ -44,9 +47,9 @@ impl Error {
         Self::Validation(BTreeMap::from([(field.into(), vec![message.into()])]))
     }
 
-    fn status(&self) -> StatusCode {
+    pub(crate) fn status(&self) -> StatusCode {
         match self {
-            Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Validation(_) | Self::Import(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
@@ -58,9 +61,10 @@ impl Error {
         }
     }
 
-    fn code(&self) -> &'static str {
+    pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Validation(_) => "validation",
+            Self::Import(_) => "import",
             Self::BadRequest(_) => "bad_request",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden(_) => "forbidden",
@@ -98,22 +102,46 @@ impl From<DbErr> for Error {
     }
 }
 
-impl IntoResponse for Error {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        if status.is_server_error() {
+impl Error {
+    /// Description destinée au client : `{ code, message, fields?, lines? }`.
+    /// Les erreurs internes sont journalisées et leur détail n'est pas exposé.
+    pub(crate) fn body(&self) -> serde_json::Value {
+        let message = if self.status().is_server_error() {
             tracing::error!(error = %self, "erreur interne");
-        }
-        // Les détails internes ne sont pas exposés au client.
-        let message = if status.is_server_error() {
             "erreur interne du serveur".to_owned()
         } else {
             self.to_string()
         };
         let mut body = json!({ "code": self.code(), "message": message });
-        if let Self::Validation(fields) = &self {
-            body["fields"] = json!(fields);
+        match self {
+            Self::Validation(fields) => body["fields"] = json!(fields),
+            Self::Import(lines) => body["lines"] = json!(lines),
+            _ => {}
         }
-        (status, Json(json!({ "error": body }))).into_response()
+        body
+    }
+}
+
+/// Erreur d'une ligne d'import : numéro de ligne du fichier (en-tête = 1) et
+/// erreur au format de [`Error::body`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RowError {
+    pub line: u64,
+    #[serde(flatten)]
+    pub error: serde_json::Value,
+}
+
+impl RowError {
+    pub(crate) fn new(line: u64, error: &Error) -> Self {
+        Self {
+            line,
+            error: error.body(),
+        }
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        (self.status(), Json(json!({ "error": self.body() }))).into_response()
     }
 }

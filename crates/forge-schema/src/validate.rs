@@ -11,10 +11,12 @@ use forge_formula::{
 };
 
 use crate::error::{Issue, SchemaError};
-use crate::graph;
 use crate::model::{ColumnRef, Model, Relation, RelationKind};
-use crate::names::{SYSTEM_COLUMNS, SYSTEM_TABLES, USER_FIELDS, check_identifier, check_locale};
+use crate::names::{
+    RESERVED_ROUTES, SYSTEM_COLUMNS, SYSTEM_TABLES, USER_FIELDS, check_identifier, check_locale,
+};
 use crate::spec::{Action, Column, ColumnType, Label, Spec, Table};
+use crate::{graph, graphql};
 
 pub(crate) fn validate(spec: Spec) -> Result<Model, SchemaError> {
     let (registry, mut issues) = declare_functions(&spec);
@@ -191,6 +193,7 @@ impl<'a> Validator<'a> {
         self.check_cycles();
         if self.issues.is_empty() {
             self.check_types();
+            self.check_api_names();
         }
     }
 
@@ -275,16 +278,23 @@ impl<'a> Validator<'a> {
                     format!("{path}.type"),
                     format!("type `{}` non autorisé pour un paramètre", param.ty.name()),
                 );
-            } else if let Some(default) = &param.default {
-                if let Err(msg) = check_value(param.ty, None, default) {
-                    self.error(format!("{path}.default"), msg);
-                }
+            } else if let Some(default) = &param.default
+                && let Err(msg) = check_value(param.ty, None, default)
+            {
+                self.error(format!("{path}.default"), msg);
             }
             self.check_label(&path, param.label.as_ref());
         }
     }
 
     // ------------------------------------------------------------- tables
+
+    /// Les noms GraphQL dérivés des tables ne doivent pas entrer en conflit.
+    fn check_api_names(&mut self) {
+        for (i, message) in graphql::conflicts(self.spec) {
+            self.error(format!("tables[{i}].name"), message);
+        }
+    }
 
     fn check_tables(&mut self) {
         if self.spec.tables.is_empty() {
@@ -298,6 +308,11 @@ impl<'a> Validator<'a> {
                 self.error(
                     format!("{path}.name"),
                     format!("`{}` est une table système de forge", table.name),
+                );
+            } else if RESERVED_ROUTES.contains(&table.name.as_str()) {
+                self.error(
+                    format!("{path}.name"),
+                    format!("`/api/{}` est un chemin réservé de l'API", table.name),
                 );
             } else if self.tables.contains_key(table.name.as_str()) {
                 self.error(
@@ -354,10 +369,10 @@ impl<'a> Validator<'a> {
                 format!("`{}` est une colonne ajoutée automatiquement", column.name),
             );
         }
-        if let Some(old) = &column.renamed_from {
-            if let Err(msg) = check_identifier(old) {
-                self.error(format!("{path}.renamed_from"), msg);
-            }
+        if let Some(old) = &column.renamed_from
+            && let Err(msg) = check_identifier(old)
+        {
+            self.error(format!("{path}.renamed_from"), msg);
         }
         self.check_label(path, column.label.as_ref());
 
@@ -435,10 +450,10 @@ impl<'a> Validator<'a> {
                     format!("{path}.default"),
                     "pas de valeur par défaut pour une relation",
                 );
-            } else if !column.is_computed() {
-                if let Err(msg) = check_value(ty, column.values.as_deref(), default) {
-                    self.error(format!("{path}.default"), msg);
-                }
+            } else if !column.is_computed()
+                && let Err(msg) = check_value(ty, column.values.as_deref(), default)
+            {
+                self.error(format!("{path}.default"), msg);
             }
         }
     }
@@ -809,13 +824,13 @@ impl<'a> Validator<'a> {
                         "date ou datetime",
                         ColumnType::is_temporal,
                     );
-                    if let (Some(start), Some(end_ty)) = (start, end_ty) {
-                        if start != end_ty {
-                            self.error(
-                                format!("{path}.end"),
-                                "`end` doit avoir le même type que `start`",
-                            );
-                        }
+                    if let (Some(start), Some(end_ty)) = (start, end_ty)
+                        && start != end_ty
+                    {
+                        self.error(
+                            format!("{path}.end"),
+                            "`end` doit avoir le même type que `start`",
+                        );
                     }
                 }
                 if let Some(duration) = &calendar.duration {
@@ -925,12 +940,11 @@ impl<'a> Validator<'a> {
                         "`*` couvre déjà toutes les actions",
                     );
                 }
-                if let (Some(src), true) = (&rule.when, known_table) {
-                    if let Some((expr, _)) =
+                if let (Some(src), true) = (&rule.when, known_table)
+                    && let Some((expr, _)) =
                         self.analyze(&format!("{path}.when"), &table.name, src, Usage::Condition)
-                    {
-                        self.conditions.insert((table.name.clone(), r), expr);
-                    }
+                {
+                    self.conditions.insert((table.name.clone(), r), expr);
                 }
             }
         }

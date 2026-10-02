@@ -202,10 +202,10 @@ fn existing_migrations(project: &Path) -> Result<Vec<String>, Error> {
     let mut names = Vec::new();
     for entry in entries {
         let path = entry.map_err(Error::io(&dir))?.path();
-        if path.extension().is_some_and(|e| e == "rs") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                names.push(stem.to_owned());
-            }
+        if path.extension().is_some_and(|e| e == "rs")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            names.push(stem.to_owned());
         }
     }
     names.sort();
@@ -221,10 +221,10 @@ fn orphan_hooks(project: &Path, model: &Model) -> Result<Vec<String>, Error> {
     let mut orphans = Vec::new();
     for entry in entries {
         let path = entry.map_err(Error::io(&dir))?.path();
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            if model.table(stem).is_none() {
-                orphans.push(stem.to_owned());
-            }
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            && model.table(stem).is_none()
+        {
+            orphans.push(stem.to_owned());
         }
     }
     orphans.sort();

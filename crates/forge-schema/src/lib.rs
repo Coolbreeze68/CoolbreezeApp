@@ -15,6 +15,7 @@
 
 mod error;
 mod graph;
+pub mod graphql;
 mod model;
 pub mod names;
 pub mod spec;

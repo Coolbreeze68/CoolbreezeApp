@@ -18,6 +18,9 @@ pub const SYSTEM_TABLES: [&str; 5] = [
 /// Champs de `$user` utilisables dans les conditions de règles.
 pub const USER_FIELDS: [&str; 2] = ["id", "email"];
 
+/// Segments réservés sous `/api/` : aucune table ne peut porter ces noms.
+pub const RESERVED_ROUTES: [&str; 2] = ["auth", "graphql"];
+
 /// Longueur maximale d'un identifiant (limite de Postgres).
 const MAX_LEN: usize = 63;
 
@@ -56,6 +59,18 @@ pub fn check_identifier(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `date_cloture` → `DateCloture` (noms de types Rust, Dart et GraphQL).
+pub fn pascal_case(name: &str) -> String {
+    name.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + chars.as_str()
+            })
+        })
+        .collect()
+}
+
 /// Code de langue : `fr`, `en`, `pt_BR`…
 pub fn check_locale(code: &str) -> Result<(), String> {
     let (lang, region) = code.split_once('_').unwrap_or((code, ""));
@@ -75,6 +90,13 @@ pub fn check_locale(code: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pascal() {
+        assert_eq!(pascal_case("date_cloture"), "DateCloture");
+        assert_eq!(pascal_case("tag"), "Tag");
+        assert_eq!(pascal_case("x2_y"), "X2Y");
+    }
 
     #[test]
     fn identifiers() {

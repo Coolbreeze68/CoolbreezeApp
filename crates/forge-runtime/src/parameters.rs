@@ -117,7 +117,8 @@ fn to_json(param: &Parameter, stored: Option<&entity::Model>) -> JsonValue {
     json!({ "name": param.name, "type": param.ty.name(), "label": label, "value": value })
 }
 
-async fn list(State(state): State<AppState>) -> Result<Json<JsonValue>, Error> {
+/// Tous les paramètres déclarés, avec leur valeur (REST et GraphQL).
+pub(crate) async fn all(state: &AppState) -> Result<JsonValue, Error> {
     let stored = entity::Entity::find().all(&state.db).await?;
     let params: Vec<_> = state
         .model
@@ -126,7 +127,41 @@ async fn list(State(state): State<AppState>) -> Result<Json<JsonValue>, Error> {
         .iter()
         .map(|p| to_json(p, stored.iter().find(|m| m.name == p.name)))
         .collect();
-    Ok(Json(json!(params)))
+    Ok(json!(params))
+}
+
+/// Modifie un paramètre (administrateur) et recalcule les formules persistées
+/// qui le lisent.
+pub(crate) async fn set(
+    state: &AppState,
+    current: &CurrentUser,
+    name: &str,
+    value: JsonValue,
+) -> Result<JsonValue, Error> {
+    current.require_admin()?;
+    let param = declared(state, name)?;
+    value::from_json(param.ty, None, &value).map_err(|msg| Error::validation("value", msg))?;
+    let stored = entity::ActiveModel {
+        name: Set(name.to_owned()),
+        value: Set(Some(value.to_string())),
+        updated_at: Set(chrono::Utc::now()),
+    };
+    // Le paramètre existe toujours : `seed` le crée au démarrage.
+    let txn = state.db.begin().await?;
+    let stored = stored.update(&txn).await?;
+    compute::propagate(
+        &txn,
+        &state.model,
+        &state.functions,
+        Changes::parameter(name),
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(to_json(param, Some(&stored)))
+}
+
+async fn list(State(state): State<AppState>) -> Result<Json<JsonValue>, Error> {
+    Ok(Json(all(&state).await?))
 }
 
 async fn read(
@@ -149,25 +184,5 @@ async fn write(
     Path(name): Path<String>,
     Json(body): Json<Update>,
 ) -> Result<Json<JsonValue>, Error> {
-    current.require_admin()?;
-    let param = declared(&state, &name)?;
-    value::from_json(param.ty, None, &body.value).map_err(|msg| Error::validation("value", msg))?;
-    let stored = entity::ActiveModel {
-        name: Set(name.clone()),
-        value: Set(Some(body.value.to_string())),
-        updated_at: Set(chrono::Utc::now()),
-    };
-    // Le paramètre existe toujours : `seed` le crée au démarrage.
-    let txn = state.db.begin().await?;
-    let stored = stored.update(&txn).await?;
-    // Les formules persistées qui lisent ce paramètre sont recalculées.
-    compute::propagate(
-        &txn,
-        &state.model,
-        &state.functions,
-        Changes::parameter(&name),
-    )
-    .await?;
-    txn.commit().await?;
-    Ok(Json(to_json(param, Some(&stored))))
+    Ok(Json(set(&state, &current, &name, body.value).await?))
 }

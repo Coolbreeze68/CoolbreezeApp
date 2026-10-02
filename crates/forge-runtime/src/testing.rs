@@ -24,9 +24,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
 pub use axum::http::{Method, StatusCode};
-use forge_schema::Model;
 use forge_schema::spec::{ColumnType, Table};
 use forge_schema::value::{self, TypedValue};
+use forge_schema::{Model, graphql};
 use http_body_util::BodyExt;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
@@ -288,16 +288,59 @@ impl TestClient {
         uri: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
+        let body = body.map_or_else(Body::empty, |b| Body::from(b.to_string()));
+        let (status, bytes) = self.send(method, uri, "application/json", body).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// Envoie un corps texte (un fichier CSV…) ; retourne le statut et le corps en texte.
+    ///
+    /// # Panics
+    ///
+    /// Si la requête ne peut pas être construite ou traitée.
+    pub async fn request_text(
+        &self,
+        method: Method,
+        uri: &str,
+        content_type: &str,
+        body: &str,
+    ) -> (StatusCode, String) {
+        let (status, bytes) = self
+            .send(method, uri, content_type, Body::from(body.to_owned()))
+            .await;
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Exécute une requête GraphQL ; retourne la réponse (`data`, `errors`).
+    ///
+    /// # Panics
+    ///
+    /// Si la requête ne peut pas être traitée.
+    pub async fn graphql(&self, query: &str, variables: Value) -> Value {
+        let body = json!({ "query": query, "variables": variables });
+        let (status, response) = self.request(Method::POST, "/api/graphql", Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "GraphQL : {response}");
+        response
+    }
+
+    async fn send(
+        &self,
+        method: Method,
+        uri: &str,
+        content_type: &str,
+        body: Body,
+    ) -> (StatusCode, axum::body::Bytes) {
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
-            .header("content-type", "application/json");
+            .header("content-type", content_type);
         if let Some(token) = &self.token {
             request = request.header("authorization", format!("Bearer {token}"));
         }
-        let request = request
-            .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
-            .expect("requête valide");
+        let request = request.body(body).expect("requête valide");
         let response = self.router.clone().oneshot(request).await.expect("réponse");
         let status = response.status();
         let bytes = response
@@ -306,8 +349,7 @@ impl TestClient {
             .await
             .expect("corps de réponse")
             .to_bytes();
-        let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        (status, json)
+        (status, bytes)
     }
 }
 
@@ -386,6 +428,87 @@ impl Checker {
         record["id"].as_i64().expect("identifiant")
     }
 
+    /// Un export CSV d'un enregistrement se réimporte tel quel (modification).
+    async fn check_csv(&mut self, table: &Table, id: i64) {
+        let name = &table.name;
+        let (status, csv) = self
+            .client
+            .request_text(
+                Method::GET,
+                &format!("/api/{name}/export?id={id}"),
+                "text/plain",
+                "",
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{name} : export CSV : {csv}");
+        assert_eq!(csv.lines().count(), 2, "{name} : export CSV : {csv}");
+        let (status, report) = self
+            .client
+            .request_text(
+                Method::POST,
+                &format!("/api/{name}/import"),
+                "text/csv",
+                &csv,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{name} : import CSV : {report}");
+        let report: Value = serde_json::from_str(&report).expect("bilan JSON");
+        assert_eq!(
+            report,
+            json!({ "created": 0, "updated": 1 }),
+            "{name} : import CSV"
+        );
+    }
+
+    /// Lecture, liste filtrée, création et suppression par GraphQL.
+    async fn check_graphql(&mut self, model: &Model, table: &Table, id: i64) {
+        let name = &table.name;
+        let query = format!(
+            "query($id: ID!) {{ {name}(id: $id) {{ id }} {list}(filter: {{ id: {{ eq: $id }} }}) {{ total }} }}",
+            list = graphql::list(name),
+        );
+        let response = self.client.graphql(&query, json!({ "id": id })).await;
+        assert_eq!(
+            response["data"][name]["id"],
+            json!(id.to_string()),
+            "{name} : GraphQL : {response}"
+        );
+        assert_eq!(
+            response["data"][graphql::list(name)]["total"],
+            json!(1),
+            "{name} : GraphQL : {response}"
+        );
+
+        let sample = self.sample(model, table, 0).await;
+        let mutation = format!(
+            "mutation($data: {input}!) {{ created: {create}(data: $data) {{ id }} }}",
+            input = graphql::input(name),
+            create = graphql::create(name),
+        );
+        let response = self
+            .client
+            .graphql(&mutation, json!({ "data": sample }))
+            .await;
+        let created = &response["data"]["created"]["id"];
+        assert!(
+            created.is_string(),
+            "{name} : création GraphQL : {response}"
+        );
+        let mutation = format!(
+            "mutation($id: ID!) {{ deleted: {}(id: $id) }}",
+            graphql::delete(name)
+        );
+        let response = self
+            .client
+            .graphql(&mutation, json!({ "id": created }))
+            .await;
+        assert_eq!(
+            response["data"]["deleted"],
+            json!(true),
+            "{name} : suppression GraphQL : {response}"
+        );
+    }
+
     /// La vue `stats` de la table, si elle existe, est servie par `/aggregate`.
     async fn check_stats(&mut self, table: &Table) {
         let Some(view) = &table.views.stats else {
@@ -444,6 +567,8 @@ impl Checker {
         let (status, read) = self.send(Method::GET, &item, None).await;
         assert_eq!(status, StatusCode::OK, "{name} : lecture : {read}");
         assert_eq!(read, created, "{name} : lecture différente de la création");
+        self.check_csv(table, id).await;
+        self.check_graphql(model, table, id).await;
 
         let (status, list) = self
             .send(Method::GET, &format!("{collection}?id={id}"), None)

@@ -1,2 +1,2 @@
 # Noms propres utilisés dans la documentation (en plus de la liste par défaut).
-doc-valid-idents = ["PostgreSQL", "MySQL", "SQLite", "MariaDB", "OpenAPI", "GraphQL", ".."]
+doc-valid-idents = ["PostgreSQL", "MySQL", "SQLite", "MariaDB", "OpenAPI", "GraphQL", "GraphiQL", ".."]

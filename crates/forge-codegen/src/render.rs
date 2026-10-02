@@ -23,6 +23,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../templates/backend/custom_functions.rs.j2"),
     ),
     (
+        "backend/custom_graphql.rs",
+        include_str!("../../../templates/backend/custom_graphql.rs.j2"),
+    ),
+    (
         "backend/custom_hooks.rs",
         include_str!("../../../templates/backend/custom_hooks.rs.j2"),
     ),

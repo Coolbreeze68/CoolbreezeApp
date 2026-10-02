@@ -13,10 +13,13 @@ testing = ["dep:tower", "dep:http-body-util"]
 
 [dependencies]
 argon2.workspace = true
+async-graphql.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 chrono.workspace = true
 clap.workspace = true
+csv.workspace = true
 forge-formula.workspace = true
 forge-schema.workspace = true
 http-body-util = { workspace = true, optional = true }
@@ -33,12 +36,13 @@ tokio.workspace = true
 tower = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-async-trait = "0.1"
 
 [[test]]
 name = "auth"

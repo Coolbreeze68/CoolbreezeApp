@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/coolbreeze68/coolbreezeapp"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 forge-codegen = { path = "crates/forge-codegen" }
@@ -17,10 +17,13 @@ forge-schema = { path = "crates/forge-schema" }
 
 anyhow = "1"
 argon2 = { version = "0.5", features = ["std"] }
+async-graphql = { version = "7", default-features = false, features = ["dataloader", "dynamic-schema", "graphiql"] }
+async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive", "env"] }
+csv = "1"
 http-body-util = "0.1"
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 minijinja = "2"
@@ -54,6 +57,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = "6"
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

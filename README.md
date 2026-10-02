@@ -20,12 +20,12 @@ n'est jamais écrasé par une régénération.
 | 2 | Migrations incrémentales : diff du schéma, renommages, protection des changements destructifs, retour arrière | ✅ |
 | 3 | Authentification JWT, comptes et rôles, règles d'autorisation (conditions traduites en SQL) | ✅ |
 | 4 | Évaluation des formules, lookups, `persist`, fonctions personnalisées, endpoint d'agrégats | ✅ |
-| 5 | GraphQL, import/export CSV, OpenAPI | à venir |
+| 5 | GraphQL (schéma dynamique, parité avec REST, résolveurs personnalisés), import/export CSV, OpenAPI + Swagger UI | ✅ |
 | 6 | Observabilité, cache | à venir |
 | 7 | Application Flutter | à venir |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Ce qui n'est **pas encore** disponible (phases suivantes) : GraphQL, CSV, OpenAPI,
+Ce qui n'est **pas encore** disponible (phases suivantes) : métriques, cache,
 l'application Flutter et Docker.
 
 ## Installation
@@ -84,6 +84,8 @@ crm/
     │   └── mod.rs             #   assemblage : app()
     ├── src/custom/            # votre code, jamais modifié par forge
     │   ├── hooks/<table>.rs   #   hooks de chaque table
+    │   ├── functions.rs       #   fonctions de formule personnalisées
+    │   ├── graphql.rs         #   champs GraphQL personnalisés
     │   └── routes.rs          #   routes HTTP personnalisées
     ├── src/migrations/        # migrations (une fois créées, jamais réécrites)
     └── tests/generated_crud.rs  # test CRUD de chaque table (réécrit)
@@ -101,6 +103,12 @@ DATABASE_URL=postgres://user:mdp@localhost/crm cargo run    # ou PostgreSQL / My
 
 Au premier démarrage, si la base n'a aucun utilisateur, le compte administrateur
 est créé à partir de `FORGE_ADMIN_EMAIL` et `FORGE_ADMIN_PASSWORD`.
+
+La documentation de l'API est servie par l'application : Swagger UI sur
+[`/docs`](http://localhost:8080/docs) (bouton « Authorize » avec le jeton d'accès),
+le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
+[`/graphql`](http://localhost:8080/graphql) : ajoutez l'en-tête
+`{ "Authorization": "Bearer <jeton>" }` dans son panneau « Headers ».
 
 | Variable | Défaut | Rôle |
 |---|---|---|
@@ -133,6 +141,13 @@ api -X PUT localhost:8080/api/parameters/tva -d '{"value": 5.5}'
 # Un commercial, qui ne pourra modifier que ce qu'il a créé (règle `owner == $user.id`)
 api -X POST localhost:8080/api/users \
     -d '{"email": "alice@exemple.fr", "password": "mot-de-passe-alice", "roles": ["commercial"]}'
+
+# Les mêmes données en GraphQL, références résolues
+api -X POST localhost:8080/api/graphql -d '{"query": "{ opportunite_list(filter: { etape: { eq: \"gagne\" } }) { total data { titre montant entreprise { nom } tags { nom } } } }"}'
+
+# Export CSV (filtres de liste), puis réimport après modification dans un tableur
+api 'localhost:8080/api/entreprise/export?secteur=industrie&delimiter=;' > entreprises.csv
+curl -s -H "authorization: Bearer $TOKEN" --data-binary @entreprises.csv localhost:8080/api/entreprise/import
 ```
 
 Les valeurs par défaut du schéma sont appliquées (`probabilite` vaut 50, `etape`
@@ -176,7 +191,7 @@ Méthodes disponibles (toutes facultatives) : `before_create`, `after_create`,
 la transaction de la requête (`ctx.db()`) ; une erreur annule toute l'opération.
 Ordre : `before_create`/`before_update` → `validate` → écriture → `after_*`.
 
-### 5. Ajouter une route
+### 5. Ajouter une route ou un champ GraphQL
 
 ```rust
 // backend/src/custom/routes.rs
@@ -184,6 +199,26 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/api/ping", axum::routing::get(|| async { "pong" }))
 }
 ```
+
+```rust
+// backend/src/custom/graphql.rs
+use forge_runtime::async_graphql::dynamic::{Field, FieldFuture, FieldValue, TypeRef};
+use forge_runtime::{App, CurrentUser};
+
+pub fn register(app: App) -> App {
+    app.graphql_query(Field::new("bonjour", TypeRef::named_nn(TypeRef::STRING), |ctx| {
+        FieldFuture::new(async move {
+            let user = ctx.data::<CurrentUser>()?;
+            Ok(Some(FieldValue::value(format!("Bonjour {}", user.email))))
+        })
+    }))
+}
+```
+
+Les routes héritent de l'authentification si leur chemin commence par `/api/`.
+Un résolveur GraphQL lit l'état de l'application (`ctx.data::<AppState>()`, base
+par `state.db()`) et l'utilisateur connecté (`ctx.data::<CurrentUser>()`) ;
+`graphql_mutation` et `graphql_type` complètent `graphql_query`.
 
 ### 6. Ajouter une fonction de formule
 
@@ -220,13 +255,17 @@ TEST_DATABASE_URL=postgres://… cargo test             # base recréée : base 
 ```
 
 `tests/generated_crud.rs` vérifie création, lecture, liste, filtre, modification,
-suppression et contraintes de chaque table, puis les droits de lecture et de
-création de chaque rôle. Pour vos propres tests, `forge_runtime::testing::TestClient`
+suppression et contraintes de chaque table, l'aller-retour export → import CSV,
+la lecture, la création et la suppression en GraphQL, puis les droits de lecture
+et de création de chaque rôle. Pour vos propres tests, `forge_runtime::testing::TestClient`
 envoie des requêtes à l'application sans réseau, connecté en administrateur ;
 `as_new_user` crée un compte avec les rôles voulus. Exemples :
 [`tests/hooks.rs`](examples/crm/backend/tests/hooks.rs) et
 [`tests/rules.rs`](examples/crm/backend/tests/rules.rs) (règle `owner == $user.id`),
-[`tests/formulas.rs`](examples/crm/backend/tests/formulas.rs) (formules et agrégats).
+[`tests/formulas.rs`](examples/crm/backend/tests/formulas.rs) (formules et agrégats),
+[`tests/graphql.rs`](examples/crm/backend/tests/graphql.rs) et
+[`tests/csv.rs`](examples/crm/backend/tests/csv.rs) ; `TestClient` offre aussi
+`graphql(requête, variables)` et `request_text` (corps CSV).
 
 ### 8. Faire évoluer le schéma
 
@@ -282,6 +321,8 @@ remplissent les lignes existantes quand une colonne est ajoutée.
 | `POST` | `/api/<table>` | Création → `201` |
 | `GET` | `/api/<table>/{id}` | Lecture |
 | `GET` | `/api/<table>/aggregate` | Agrégats (voir plus bas) |
+| `GET` | `/api/<table>/export` | Export CSV (voir plus bas) |
+| `POST` | `/api/<table>/import` | Import CSV, tout ou rien |
 | `PATCH` | `/api/<table>/{id}` | Modification partielle |
 | `DELETE` | `/api/<table>/{id}` | Suppression → `204` |
 | `GET` | `/api/parameters` | Paramètres et leurs valeurs |
@@ -298,8 +339,8 @@ Paramètres de liste :
 | `<colonne>[op]` | `montant[gte]=1000` | `ne`, `lt`, `lte`, `gt`, `gte`, `like`, `in` (`a,b`), `null` (`true`/`false`) |
 
 Seules les colonnes stockées (dont `id`, `owner`, `created_at`, `updated_at`) sont
-filtrables et triables. Formats JSON : décimaux en texte (`"12.50"`, nombres acceptés
-en entrée), dates `AAAA-MM-JJ`, dates-heures RFC 3339, durées en secondes,
+filtrables et triables. Formats JSON : décimaux en texte sans zéros superflus
+(`"12.5"`, nombres acceptés en entrée), dates `AAAA-MM-JJ`, dates-heures RFC 3339, durées en secondes,
 `reference` = identifiant, `reference_list` = liste d'identifiants.
 
 Colonnes calculées : les formules non persistées et les lookups sont évalués à
@@ -330,6 +371,72 @@ une référence obligatoire), `422` validation (détail par champ).
 Suppression : une référence obligatoire bloque la suppression de sa cible, une
 référence facultative est remise à `null`, les liens `reference_list` sont supprimés.
 
+### Import et export CSV
+
+`GET /api/<table>/export` renvoie un fichier CSV : `id`, toutes les colonnes du
+schéma (calculées comprises), `owner`, `created_at`, `updated_at`. Les filtres, la
+recherche et le tri de liste s'appliquent (sans pagination), ainsi que le périmètre
+de lecture ; `delimiter=;` produit un fichier pour Excel en français. Une cellule
+vide vaut `null`, une `reference_list` s'écrit `1,2,3`.
+
+`POST /api/<table>/import` reçoit le fichier dans le corps de la requête :
+
+- la première ligne nomme les colonnes ; le séparateur (`,` ou `;`) est détecté ;
+- une ligne avec un `id` modifie l'enregistrement, une ligne sans `id` le crée (ses
+  cellules vides prennent la valeur par défaut) ;
+- les colonnes calculées et système sont ignorées : un export se réimporte tel quel ;
+- chaque ligne passe par les mêmes validations, règles d'autorisation et hooks
+  qu'une requête REST ;
+- **tout ou rien** : à la moindre erreur, rien n'est enregistré et la réponse `422`
+  liste les erreurs de chaque ligne (numéro de ligne du fichier, en-tête = 1) :
+
+```json
+{ "error": { "code": "import", "message": "import refusé : 2 ligne(s) en erreur, aucune donnée enregistrée",
+  "lines": [ { "line": 3, "code": "validation", "message": "données invalides",
+               "fields": { "montant": ["valeur \"abc\" invalide : attendu un nombre"] } },
+             { "line": 4, "code": "conflict", "message": "référence invalide, …" } ] } }
+```
+
+En cas de succès : `{ "created": 12, "updated": 3 }`. Le corps est limité à 2 Mo
+(limite par défaut d'axum).
+
+## API GraphQL
+
+`POST /api/graphql` (authentifié comme le reste de `/api/`) ; éditeur interactif sur
+`/graphql`. Le schéma est construit au démarrage à partir de `forge.json` et donne
+accès aux mêmes opérations que l'API REST, avec les mêmes validations, règles et
+hooks. Pour la table `opportunite` :
+
+| Opération | Effet |
+|---|---|
+| `opportunite(id: ID!): Opportunite` | Lecture (`null` si introuvable ou hors périmètre) |
+| `opportunite_list(page, per_page, sort, q, filter): OpportunitePage!` | Liste : `data`, `page`, `per_page`, `total` |
+| `opportunite_aggregate(fields, group_by, q, filter): JSON!` | Agrégats, comme `/aggregate` |
+| `create_opportunite(data: OpportuniteInput!)` | Création |
+| `update_opportunite(id: ID!, data: OpportuniteInput!)` | Modification : seuls les champs fournis changent |
+| `delete_opportunite(id: ID!): Boolean!` | Suppression |
+| `parameters: JSON!`, `update_parameter(name, value)` | Paramètres |
+
+```graphql
+{
+  opportunite_list(sort: "-montant", filter: { montant: { gte: "1000" }, etape: { in: ["gagne", "proposition"] } }) {
+    total
+    data { titre montant montant_ttc etape entreprise { nom secteur } tags { nom } }
+  }
+}
+```
+
+- Types : `ID` (identifiants), `Int`, `Boolean`, `String`, et les scalaires `Decimal`
+  (texte), `Date`, `DateTime`, `JSON` ; une colonne `enum` devient une énumération
+  GraphQL (`OpportuniteEtape`).
+- Une `reference` se lit comme l'enregistrement cible, une `reference_list` comme
+  la liste des cibles ; elles sont chargées par lots, avec les droits de
+  l'utilisateur (une cible hors de son périmètre vaut `null`).
+- Filtres : `{ colonne: { eq, ne, lt, lte, gt, gte, like, in, is_null } }`, sur les
+  colonnes stockées.
+- Erreurs : `extensions.code` (`validation`, `forbidden`, `conflict`…) et, pour une
+  validation, `extensions.fields` (détail par champ, comme en REST).
+- L'authentification et la gestion des comptes restent en REST.
 ### Authentification et comptes
 
 | Méthode | Chemin | Effet |
@@ -409,14 +516,15 @@ Les identifiants (tables, colonnes, rôles, valeurs d'enum) sont en `snake_case`
 
 | Clé | Description |
 |---|---|
-| `name`, `label` | Nom technique et libellé (texte ou `{ "fr": …, "en": … }`). |
+| `name`, `label` | Nom technique et libellé (texte ou `{ "fr": …, "en": … }`). Les noms GraphQL qui en dérivent ne doivent pas entrer en conflit (`a_b` et l'énumération `b` de `a` donnent tous deux `AB`). |
 | `columns` | Colonnes métier. |
 | `views` | `calendar` : `{ start, end? \| duration? }` ; `stats` : `{ fields, group_by? }`. |
 | `rules` | Règles d'autorisation (voir plus bas). Sans règle, seul `admin` accède à la table. |
 
 Ajoutées automatiquement à chaque table : `id`, `created_at`, `updated_at`, `owner`
 (créateur de l'enregistrement).
-Tables système réservées : `users`, `roles`, `user_roles`, `parameters`, `refresh_tokens`.
+Tables système réservées : `users`, `roles`, `user_roles`, `parameters`, `refresh_tokens` ;
+noms réservés par l'API : `auth`, `graphql`.
 
 ### Types de colonnes
 
@@ -498,7 +606,8 @@ crates/
 ├── forge-schema/   format d'entrée : types serde, validation, modèle résolu, valeurs typées, JSON Schema
 ├── forge-formula/  langage de formules : lexer, parser, AST, typage, évaluation, registre de fonctions
 ├── forge-codegen/  génération : structure de stockage, diff et migrations, templates, écriture idempotente
-├── forge-runtime/  logique des apps générées : CRUD générique, filtres, agrégats, calcul des formules, auth, hooks, migrations, CLI
+├── forge-runtime/  logique des apps générées : CRUD générique (REST, GraphQL, CSV), OpenAPI, filtres,
+│                   agrégats, calcul des formules, auth, hooks, migrations, CLI
 └── forge-cli/      binaire `forge`
 templates/backend/  templates minijinja, embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)
@@ -507,8 +616,9 @@ scripts/            scénario de bout en bout (évolution du schéma)
 
 Le backend généré embarque son schéma (`src/generated/forge.json`) : `forge-runtime`
 le relit au démarrage et en tire tout le comportement générique (validation des
-corps, filtres, valeurs par défaut, liens N↔N, paramètres, formules). Le code généré se
-limite aux entités sea-orm typées, à la migration et au branchement des hooks.
+corps, filtres, valeurs par défaut, liens N↔N, paramètres, formules, schéma GraphQL,
+document OpenAPI). Le code généré se limite aux entités sea-orm typées, à la
+migration et au branchement des hooks.
 
 ## Développement
 

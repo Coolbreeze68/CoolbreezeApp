@@ -10,14 +10,18 @@ pub mod auth;
 pub mod cli;
 mod columns;
 mod compute;
+mod csv_io;
 mod error;
+mod graphql;
 pub mod hooks;
 mod links;
 pub mod migration;
+mod openapi;
 mod parameters;
 mod payload;
 mod query;
 mod resource;
+mod rest;
 mod rules;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -32,6 +36,9 @@ pub mod formula {
     pub use rust_decimal::Decimal;
 }
 pub use auth::{AuthConfig, CurrentUser};
-pub use error::{Error, FieldErrors};
+pub use error::{Error, FieldErrors, RowError};
 pub use hooks::{HookContext, Hooks};
 pub use resource::ForgeEntity;
+
+/// Types GraphQL (`async_graphql::dynamic`) pour les résolveurs personnalisés.
+pub use async_graphql;

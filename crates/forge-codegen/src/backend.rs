@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use forge_schema::names::pascal_case;
 use serde::Serialize;
 
 use crate::error::Error;
@@ -107,6 +108,7 @@ impl Backend<'_> {
                 "backend/src/custom/functions.rs",
                 "backend/custom_functions.rs",
             )?,
+            once("backend/src/custom/graphql.rs", "backend/custom_graphql.rs")?,
             once(".gitignore", "backend/gitignore")?,
             generated("backend/src/generated/mod.rs", "backend/generated_mod.rs")?,
             generated(
@@ -139,29 +141,5 @@ impl Backend<'_> {
             });
         }
         Ok(files)
-    }
-}
-
-/// `date_cloture` → `DateCloture`.
-pub(crate) fn pascal_case(name: &str) -> String {
-    name.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + chars.as_str()
-            })
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names() {
-        assert_eq!(pascal_case("date_cloture"), "DateCloture");
-        assert_eq!(pascal_case("tag"), "Tag");
-        assert_eq!(pascal_case("x2_y"), "X2Y");
     }
 }

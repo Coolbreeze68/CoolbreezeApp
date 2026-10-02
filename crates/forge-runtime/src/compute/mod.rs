@@ -78,7 +78,7 @@ fn value_to_json(ty: ColumnType, value: Value) -> JsonValue {
 
 /// Type des valeurs d'une colonne calculée : celui de la colonne, ou pour un
 /// lookup celui de la colonne visée.
-fn result_type(model: &Model, column: &ColumnRef) -> ColumnType {
+pub(crate) fn result_type(model: &Model, column: &ColumnRef) -> ColumnType {
     let mut current = column.clone();
     loop {
         let Some(found) = model.column(&current) else {

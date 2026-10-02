@@ -166,6 +166,35 @@ fn parameter_checks() {
 // ------------------------------------------------------------ tables et colonnes
 
 #[test]
+fn reserved_api_paths() {
+    let mut schema = base();
+    schema["tables"][2]["name"] = json!("graphql");
+    assert_issue(&schema, "tables[2].name", "chemin réservé");
+}
+
+#[test]
+fn graphql_names_must_not_collide() {
+    let with_table = |name: &str| {
+        let mut schema = base();
+        let table = json!({ "name": name, "columns": [{ "name": "x", "type": "string" }] });
+        schema["tables"].as_array_mut().unwrap().push(table);
+        schema
+    };
+    // `client` + énumération `categorie` → `ClientCategorie`.
+    assert_issue(
+        &with_table("client_categorie"),
+        "tables[3].name",
+        "`ClientCategorie`",
+    );
+    assert_issue(&with_table("date_time"), "tables[3].name", "type prédéfini");
+    assert_issue(
+        &with_table("produit_list"),
+        "tables[3].name",
+        "`produit_list`",
+    );
+}
+
+#[test]
 fn table_names() {
     let mut schema = base();
     schema["tables"][0]["name"] = json!("users");
