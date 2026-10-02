@@ -33,6 +33,7 @@ use crate::rules::Scope;
 const FUNCTIONS: [&str; 4] = ["sum", "avg", "min", "max"];
 
 /// Paramètres d'agrégation validés.
+#[derive(Debug)]
 pub(crate) struct AggregateQuery {
     fields: Vec<String>,
     group_by: Option<(String, ColumnType)>,

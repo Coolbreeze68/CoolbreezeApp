@@ -239,12 +239,14 @@ pub(crate) async fn neighborhood(
 /// cascade, dans l'ordre des dépendances.
 ///
 /// Une erreur d'évaluation annule l'écriture (erreur de validation sur la colonne).
+/// Retourne les tables dont des lignes ont été modifiées.
 pub(crate) async fn propagate(
     db: &impl ConnectionTrait,
     model: &Model,
     functions: &FunctionRegistry,
     mut changes: Changes,
-) -> Result<(), Error> {
+) -> Result<BTreeSet<String>, Error> {
+    let mut written = BTreeSet::new();
     let persisted: Vec<&ColumnRef> = model
         .computed_order()
         .iter()
@@ -296,9 +298,68 @@ pub(crate) async fn propagate(
             db.execute(&update).await?;
             updated.push(id);
         }
+        if !updated.is_empty() {
+            written.insert(column.table.clone());
+        }
         changes.add(&column.table, updated);
     }
-    Ok(())
+    Ok(written)
+}
+
+/// Tables dont dépend la lecture de `table` (voir [`crate::cache`]) : elle-même,
+/// les cibles de ses relations et `users` (leur suppression modifie ses
+/// références, dont `owner`), les
+/// tables lues par ses lookups et formules calculées à la lecture, de proche en
+/// proche, et `parameters` si l'une d'elles lit un paramètre. `daily` : une
+/// formule calculée à la lecture peut dépendre de la date (`TODAY`).
+pub(crate) fn read_dependencies(model: &Model, table: &str) -> crate::cache::Dependencies {
+    let mut tables = BTreeSet::from([table.to_owned(), "users".to_owned()]);
+    let mut daily = false;
+    let columns = model
+        .table(table)
+        .map(|t| t.columns.as_slice())
+        .unwrap_or_default();
+    tables.extend(columns.iter().filter_map(|c| c.target.clone()));
+    let mut pending: Vec<ColumnRef> = columns
+        .iter()
+        .filter(|c| c.is_computed() && !c.persist)
+        .map(|c| ColumnRef::new(table, &c.name))
+        .collect();
+    let mut seen = BTreeSet::new();
+    while let Some(column) = pending.pop() {
+        if !seen.insert(column.clone()) {
+            continue;
+        }
+        let segments = if let Some(path) = model.lookup_path(&column) {
+            vec![path.to_vec()]
+        } else if let Some(expr) = model.formula(&column) {
+            daily = true;
+            if !paths::parameters(model, &column).is_empty() {
+                tables.insert("parameters".to_owned());
+            }
+            paths::paths(expr)
+        } else {
+            continue;
+        };
+        for segments in segments {
+            let path = paths::resolve(model, &column.table, &segments);
+            tables.extend(path.hops.iter().map(|hop| hop.to().to_owned()));
+            if let Some(name) = &path.column {
+                let end = ColumnRef::new(path.end_table(&column.table), name);
+                // Une colonne calculée à la lecture lit à son tour d'autres tables.
+                if model
+                    .column(&end)
+                    .is_some_and(|c| c.is_computed() && !c.persist)
+                {
+                    pending.push(end);
+                }
+            }
+        }
+    }
+    crate::cache::Dependencies {
+        tables: tables.into_iter().collect(),
+        daily,
+    }
 }
 
 /// Enregistrements de `column.table` dont la valeur de `column` peut changer.

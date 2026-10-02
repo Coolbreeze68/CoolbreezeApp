@@ -14,6 +14,8 @@ cargo run -p forge-cli -- schema > forge.schema.json    # obligatoire après mod
 cargo run -p forge-cli -- generate --dir examples/crm   # obligatoire après modification des templates/codegen
 TEST_DATABASE_URL=postgres://… cargo test -p mini_crm    # CRUD du CRM sur PostgreSQL ou MySQL
 TEST_DATABASE_URL=postgres://… cargo test -p forge-runtime --test migration  # migrations avec données
+TEST_CACHE_URL=redis://localhost:6379 cargo test -p mini_crm --features forge-runtime/redis  # CRM avec Redis
+TEST_CACHE_URL=redis://… cargo test -p forge-runtime --features redis --test redis -- --include-ignored
 ./scripts/e2e-evolution.sh                              # scénario complet (DATABASE_URL : base vide)
 ```
 
@@ -22,7 +24,7 @@ est obsolète, `crm_example_is_up_to_date` si `examples/crm` ne correspond plus 
 que produit le générateur. `examples/crm/backend` est membre du workspace : son test
 CRUD généré tourne avec `cargo test`.
 
-Postgres et MariaDB peuvent être installés localement (pas de Docker dans
+Postgres, MariaDB et Redis peuvent être installés localement (pas de Docker dans
 l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 
 ## Règles de travail
@@ -41,7 +43,7 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`, `typecheck` (trait `TypeEnv`), `eval` (trait `Env`, sémantique NULL). `FunctionRegistry` : signatures (arité, types, agrégat, volatile) et implémentations (intégrées et personnalisées). Aucune connaissance du schéma. |
 | `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `graphql` : noms GraphQL dérivés des tables et détection de leurs conflits. `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
 | `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
-| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : trait `Service` (opérations d'une table, indépendantes du transport : liste, lecture, agrégats, écriture, import) implémenté par `Resource<E, H>` pour chaque entité. `rest`, `graphql` (schéma dynamique, `DataLoader` des références) et `csv_io` n'appellent que `Service`. `openapi` : document OpenAPI écrit en JSON depuis le modèle, chargé dans `utoipa` et servi par Swagger UI. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`, `graphql`, `request_text`), `check_resources` (CRUD REST, aller-retour CSV, GraphQL), `check_rules`. |
+| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : trait `Service` (opérations d'une table, indépendantes du transport : liste, lecture, agrégats, écriture, import) implémenté par `Resource<E, H>` pour chaque entité. `rest`, `graphql` (schéma dynamique, `DataLoader` des références) et `csv_io` n'appellent que `Service`. `openapi` : document OpenAPI écrit en JSON depuis le modèle, chargé dans `utoipa` et servi par Swagger UI. `cache` : trait `Cache` (`MemoryCache` moka, `RedisCache` sous feature `redis`), `Reads` (clés versionnées, dépendances par table calculées par `compute::read_dependencies`). `observability` : journaux (`LogFormat`), `x-request-id`, trace, métriques Prometheus, `/health`, `/metrics`. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`, `graphql`, `request_text`), `check_resources` (CRUD REST, aller-retour CSV, GraphQL), `check_rules`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 
 Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
@@ -170,6 +172,18 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
   avoir un `type`, chaque paramètre `required`) ; Swagger UI embarqué (`vendored`).
   `/docs`, `/openapi.json` et `/graphql` (GraphiQL) sont hors de `/api/`, donc publics.
 - Décimaux renvoyés normalisés (`"500"`, pas `"500.0000"` sous PostgreSQL/MySQL).
+- Cache : toute écriture passe par un `Written` (tables écrites : la table, les
+  tables recalculées par `propagate`, celles signalées par `HookContext::modified`),
+  invalidé **après** le commit (avant, une lecture concurrente remettrait l'ancienne
+  valeur en cache sous la nouvelle version). Une nouvelle source d'écriture doit
+  faire de même (`AppState::invalidate`). Une nouvelle dépendance de lecture (une
+  table lue par la sortie d'une autre) s'ajoute dans `compute::read_dependencies`.
+  Le cache est actif par défaut, donc dans tous les tests : une invalidation
+  manquante y apparaît comme une lecture périmée.
+- Une erreur de cache ne fait jamais échouer une requête (journalisée, lecture en
+  base) ; sans versions lisibles, la lecture contourne le cache.
+- Métriques : enregistreur Prometheus global au processus (`OnceLock`), libellé
+  `path` = modèle de route (`MatchedPath`), jamais l'URL (cardinalité).
 - `rust-version` 1.88 (exigé par utoipa-swagger-ui) : let-chains utilisables.
 - Tests sur PostgreSQL/MySQL : base partagée, tests d'un binaire sérialisés par le
   verrou de `TestDatabase`.

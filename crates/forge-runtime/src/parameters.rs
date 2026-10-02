@@ -149,7 +149,7 @@ pub(crate) async fn set(
     // Le paramètre existe toujours : `seed` le crée au démarrage.
     let txn = state.db.begin().await?;
     let stored = stored.update(&txn).await?;
-    compute::propagate(
+    let mut written = compute::propagate(
         &txn,
         &state.model,
         &state.functions,
@@ -157,6 +157,10 @@ pub(crate) async fn set(
     )
     .await?;
     txn.commit().await?;
+    // Les lectures dont une formule lit un paramètre dépendent de `parameters`.
+    written.insert("parameters".to_owned());
+    let tables: Vec<&str> = written.iter().map(String::as_str).collect();
+    state.invalidate(&tables).await;
     Ok(to_json(param, Some(&stored)))
 }
 

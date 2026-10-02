@@ -6,20 +6,23 @@
 //! ```
 //!
 //! Configuration par options ou variables d'environnement :
-//! `DATABASE_URL`, `FORGE_ADDR`, `FORGE_AUTO_MIGRATE`, `RUST_LOG`, et pour
-//! l'authentification `FORGE_JWT_SECRET`, `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD`.
+//! `DATABASE_URL`, `FORGE_ADDR`, `FORGE_AUTO_MIGRATE`, `FORGE_CACHE_TTL`,
+//! `FORGE_CACHE_URL`, `RUST_LOG`, `FORGE_LOG_FORMAT`, et pour l'authentification
+//! `FORGE_JWT_SECRET`, `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD`.
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{ArgAction, Parser, Subcommand};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
-use tracing_subscriber::EnvFilter;
 
-use crate::app::App;
+use crate::app::{App, DEFAULT_CACHE_CAPACITY};
 use crate::auth::AuthConfig;
+use crate::cache::MemoryCache;
 use crate::error::Error;
+use crate::observability::{self, LogFormat};
 
 #[derive(Debug, Parser)]
 #[command(about = "Application générée par forge")]
@@ -40,6 +43,14 @@ struct Cli {
     /// Applique les migrations en attente au démarrage du serveur.
     #[arg(long, env = "FORGE_AUTO_MIGRATE", default_value_t = true, action = ArgAction::Set)]
     auto_migrate: bool,
+
+    /// Durée de vie des lectures en cache, en secondes (0 : cache désactivé).
+    #[arg(long, env = "FORGE_CACHE_TTL", default_value_t = 60)]
+    cache_ttl: u64,
+
+    /// Cache Redis partagé (`redis://hôte:6379`) ; sans lui, cache en mémoire.
+    #[arg(long, env = "FORGE_CACHE_URL")]
+    cache_url: Option<String>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -66,11 +77,7 @@ enum MigrateAction {
 
 /// Point d'entrée du binaire généré.
 pub async fn run<M: MigratorTrait>(app: impl FnOnce() -> Result<App, Error>) -> ExitCode {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn")),
-        )
-        .init();
+    observability::init_logging(LogFormat::from_env());
     match execute::<M>(Cli::parse(), app).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -99,7 +106,8 @@ async fn execute<M: MigratorTrait>(
                 M::up(&db, None).await?;
                 db.close().await?;
             }
-            serve(app()?, connect(&cli.database_url, false).await?, cli.addr).await
+            let app = with_cache(app()?, cli.cache_ttl, cli.cache_url.as_deref()).await?;
+            serve(app, connect(&cli.database_url, false).await?, cli.addr).await
         }
     }
 }
@@ -115,6 +123,30 @@ pub(crate) async fn connect(url: &str, migrating: bool) -> Result<DatabaseConnec
     Database::connect(options)
         .await
         .map_err(|err| Error::Config(format!("connexion à la base impossible : {err}")))
+}
+
+/// Cache des lectures : désactivé (`ttl` nul), Redis (`url`) ou en mémoire.
+/// Asynchrone pour la connexion à Redis, absente sans la feature `redis`.
+#[cfg_attr(not(feature = "redis"), allow(clippy::unused_async))]
+async fn with_cache(app: App, ttl: u64, url: Option<&str>) -> Result<App, Error> {
+    if ttl == 0 {
+        return Ok(app.without_cache());
+    }
+    let ttl = Duration::from_secs(ttl);
+    match url {
+        None => Ok(app.cache(MemoryCache::new(ttl, DEFAULT_CACHE_CAPACITY))),
+        #[cfg(feature = "redis")]
+        Some(url) => {
+            let namespace = app.schema().spec().app.name.clone();
+            let cache = crate::cache::RedisCache::connect(url, &namespace, ttl).await?;
+            tracing::info!("cache Redis activé");
+            Ok(app.cache(cache))
+        }
+        #[cfg(not(feature = "redis"))]
+        Some(_) => Err(Error::Config(
+            "FORGE_CACHE_URL exige la feature `redis` de forge-runtime (backend/Cargo.toml)".into(),
+        )),
+    }
 }
 
 async fn serve(app: App, db: DatabaseConnection, addr: SocketAddr) -> Result<(), Error> {

@@ -21,12 +21,12 @@ n'est jamais écrasé par une régénération.
 | 3 | Authentification JWT, comptes et rôles, règles d'autorisation (conditions traduites en SQL) | ✅ |
 | 4 | Évaluation des formules, lookups, `persist`, fonctions personnalisées, endpoint d'agrégats | ✅ |
 | 5 | GraphQL (schéma dynamique, parité avec REST, résolveurs personnalisés), import/export CSV, OpenAPI + Swagger UI | ✅ |
-| 6 | Observabilité, cache | à venir |
+| 6 | Observabilité (journaux JSON, identifiant de requête, `/metrics`, `/health`), cache des lectures (mémoire ou Redis) invalidé à l'écriture | ✅ |
 | 7 | Application Flutter | à venir |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Ce qui n'est **pas encore** disponible (phases suivantes) : métriques, cache,
-l'application Flutter et Docker.
+Ce qui n'est **pas encore** disponible (phases suivantes) : l'application Flutter
+et Docker.
 
 ## Installation
 
@@ -104,7 +104,10 @@ DATABASE_URL=postgres://user:mdp@localhost/crm cargo run    # ou PostgreSQL / My
 Au premier démarrage, si la base n'a aucun utilisateur, le compte administrateur
 est créé à partir de `FORGE_ADMIN_EMAIL` et `FORGE_ADMIN_PASSWORD`.
 
-La documentation de l'API est servie par l'application : Swagger UI sur
+L'application expose aussi `/health` (état du serveur et de la base) et `/metrics`
+(métriques Prometheus), sans authentification : voir
+[Observabilité et cache](#observabilité-et-cache). La documentation de l'API est
+servie par l'application : Swagger UI sur
 [`/docs`](http://localhost:8080/docs) (bouton « Authorize » avec le jeton d'accès),
 le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
 [`/graphql`](http://localhost:8080/graphql) : ajoutez l'en-tête
@@ -117,7 +120,10 @@ le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
 | `FORGE_AUTO_MIGRATE` | `true` | Migrations appliquées au démarrage |
 | `FORGE_JWT_SECRET` | aléatoire | Signature des jetons ; sans elle, les sessions sont perdues à chaque redémarrage |
 | `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD` | — | Compte administrateur initial |
+| `FORGE_CACHE_TTL` | `60` | Durée de vie des lectures en cache, en secondes ; `0` désactive le cache |
+| `FORGE_CACHE_URL` | — | Cache Redis partagé (`redis://hôte:6379`), feature `redis` ; sinon cache en mémoire |
 | `RUST_LOG` | `info,sqlx=warn` | Niveau des journaux |
+| `FORGE_LOG_FORMAT` | `text` (debug), `json` (release) | Format des journaux |
 
 ### 3. Utiliser l'API
 
@@ -191,6 +197,17 @@ Méthodes disponibles (toutes facultatives) : `before_create`, `after_create`,
 la transaction de la requête (`ctx.db()`) ; une erreur annule toute l'opération.
 Ordre : `before_create`/`before_update` → `validate` → écriture → `after_*`.
 
+Un hook qui écrit dans une table doit le signaler, pour que les lectures en cache
+qui en dépendent soient invalidées ([exemple](examples/crm/backend/src/custom/hooks/activite.rs)) :
+
+```rust
+async fn after_create(&self, ctx: &HookContext<'_>, record: &Model) -> Result<(), Error> {
+    // … écriture dans `opportunite` avec ctx.db() …
+    ctx.modified("opportunite");
+    Ok(())
+}
+```
+
 ### 5. Ajouter une route ou un champ GraphQL
 
 ```rust
@@ -216,6 +233,8 @@ pub fn register(app: App) -> App {
 ```
 
 Les routes héritent de l'authentification si leur chemin commence par `/api/`.
+Une route qui écrit en base appelle `state.invalidate(&["table"]).await` une fois
+l'écriture validée, pour le cache.
 Un résolveur GraphQL lit l'état de l'application (`ctx.data::<AppState>()`, base
 par `state.db()`) et l'utilisateur connecté (`ctx.data::<CurrentUser>()`) ;
 `graphql_mutation` et `graphql_type` complètent `graphql_query`.
@@ -264,8 +283,11 @@ envoie des requêtes à l'application sans réseau, connecté en administrateur 
 [`tests/rules.rs`](examples/crm/backend/tests/rules.rs) (règle `owner == $user.id`),
 [`tests/formulas.rs`](examples/crm/backend/tests/formulas.rs) (formules et agrégats),
 [`tests/graphql.rs`](examples/crm/backend/tests/graphql.rs) et
-[`tests/csv.rs`](examples/crm/backend/tests/csv.rs) ; `TestClient` offre aussi
-`graphql(requête, variables)` et `request_text` (corps CSV).
+[`tests/csv.rs`](examples/crm/backend/tests/csv.rs),
+[`tests/observability.rs`](examples/crm/backend/tests/observability.rs) (santé,
+métriques, cache) ; `TestClient` offre aussi `graphql(requête, variables)`,
+`request_text` (corps CSV) et `request_headers`. Avec la feature `redis` de
+`forge-runtime` et `TEST_CACHE_URL=redis://…`, les tests utilisent un cache Redis.
 
 ### 8. Faire évoluer le schéma
 
@@ -399,6 +421,76 @@ vide vaut `null`, une `reference_list` s'écrit `1,2,3`.
 
 En cas de succès : `{ "created": 12, "updated": 3 }`. Le corps est limité à 2 Mo
 (limite par défaut d'axum).
+
+## Observabilité et cache
+
+### Journaux et identifiant de requête
+
+Les journaux passent par `tracing` : texte lisible en développement, une ligne
+JSON par événement en production (`FORGE_LOG_FORMAT`). Chaque requête reçoit un
+identifiant `x-request-id` (repris s'il est fourni par le client ou le proxy),
+renvoyé dans la réponse et présent dans tous ses journaux :
+
+```json
+{"timestamp":"…","level":"INFO","message":"finished processing request","latency":"3 ms","status":200,
+ "span":{"method":"GET","path":"/api/tag","request_id":"5c47fd1e-…","name":"requête"}}
+```
+
+Les erreurs internes sont journalisées avec leur détail, qui n'est jamais renvoyé
+au client.
+
+### Santé et métriques
+
+| Chemin | Contenu |
+|---|---|
+| `GET /health` | `200 {"status": "ok", "database": "ok"}`, ou `503` si la base ne répond pas (2 s) |
+| `GET /metrics` | Métriques Prometheus |
+
+| Métrique | Libellés |
+|---|---|
+| `http_requests_total` | `method`, `path` (modèle de route : `/api/opportunite/{id}`), `status` |
+| `http_request_duration_seconds` (histogramme) | `method`, `path` |
+| `forge_cache_requests_total` | `table`, `result` (`hit`, `miss`) |
+
+Ces deux routes ne demandent pas d'authentification : restreignez `/metrics` au
+réseau interne au niveau du proxy.
+
+### Cache des lectures
+
+Les listes, lectures et agrégats (REST et GraphQL) sont mis en cache ; l'export
+CSV et les références chargées par GraphQL lisent toujours la base.
+
+- La clé d'une lecture contient sa requête complète et le périmètre de
+  l'utilisateur (règles) : deux utilisateurs ne partagent une entrée que s'ils
+  voient exactement les mêmes enregistrements.
+- Chaque table a une version, incrémentée après chaque écriture validée. La clé
+  contient les versions des tables dont la lecture dépend : la table elle-même,
+  les cibles de ses relations, les tables lues par ses lookups et formules
+  calculées à la lecture, les paramètres et les comptes (`owner`). Une écriture
+  invalide donc exactement les lectures concernées, y compris les formules
+  persistées recalculées dans d'autres tables. Une table avec des formules
+  calculées à la lecture est aussi relue chaque jour (`TODAY`).
+- Une écriture faite hors de forge doit être signalée : `ctx.modified("table")`
+  dans un hook, `state.invalidate(&["table"])` dans une route personnalisée.
+  Une écriture directe en base (autre application, SQL manuel) n'est vue qu'à
+  l'expiration des entrées (`FORGE_CACHE_TTL`).
+
+Par défaut, le cache est en mémoire (10 000 entrées, 60 s), propre à chaque
+instance. Pour plusieurs instances, activez Redis, partagé par toutes :
+
+```toml
+# backend/Cargo.toml
+forge-runtime = { path = "…", features = ["redis"] }
+```
+
+```bash
+FORGE_CACHE_URL=redis://localhost:6379 cargo run
+```
+
+Une panne de Redis ne fait pas échouer les requêtes : elle est journalisée et les
+lectures se font en base. Dans le code, `App::cache(...)` accepte toute
+implémentation du trait `forge_runtime::cache::Cache`, et `App::without_cache()`
+désactive le cache.
 
 ## API GraphQL
 
@@ -607,7 +699,7 @@ crates/
 ├── forge-formula/  langage de formules : lexer, parser, AST, typage, évaluation, registre de fonctions
 ├── forge-codegen/  génération : structure de stockage, diff et migrations, templates, écriture idempotente
 ├── forge-runtime/  logique des apps générées : CRUD générique (REST, GraphQL, CSV), OpenAPI, filtres,
-│                   agrégats, calcul des formules, auth, hooks, migrations, CLI
+│                   agrégats, calcul des formules, auth, hooks, cache, observabilité, migrations, CLI
 └── forge-cli/      binaire `forge`
 templates/backend/  templates minijinja, embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)

@@ -10,6 +10,8 @@ rust-version.workspace = true
 [features]
 # Outils de test des applications générées (base de test, vérification CRUD).
 testing = ["dep:tower", "dep:http-body-util"]
+# Cache partagé Redis (`FORGE_CACHE_URL=redis://…`), en plus du cache en mémoire.
+redis = ["dep:redis"]
 
 [dependencies]
 argon2.workspace = true
@@ -24,6 +26,10 @@ forge-formula.workspace = true
 forge-schema.workspace = true
 http-body-util = { workspace = true, optional = true }
 jsonwebtoken.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+moka.workspace = true
+redis = { workspace = true, optional = true }
 rust_decimal.workspace = true
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
@@ -34,6 +40,7 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower = { workspace = true, optional = true }
+tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 utoipa.workspace = true
@@ -51,3 +58,7 @@ required-features = ["testing"]
 [[test]]
 name = "functions"
 required-features = ["testing"]
+
+[[test]]
+name = "redis"
+required-features = ["redis"]

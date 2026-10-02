@@ -23,7 +23,7 @@ use std::sync::{Arc, LazyLock};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
-pub use axum::http::{Method, StatusCode};
+pub use axum::http::{HeaderMap, Method, StatusCode};
 use forge_schema::spec::{ColumnType, Table};
 use forge_schema::value::{self, TypedValue};
 use forge_schema::{Model, graphql};
@@ -224,7 +224,8 @@ impl TestClient {
             email: ADMIN_EMAIL.into(),
             password: PASSWORD.into(),
         });
-        let router = app
+        let router = test_cache(app)
+            .await
             .into_router(db.connection, auth)
             .await
             .expect("démarrage de l'application");
@@ -289,7 +290,7 @@ impl TestClient {
         body: Option<Value>,
     ) -> (StatusCode, Value) {
         let body = body.map_or_else(Body::empty, |b| Body::from(b.to_string()));
-        let (status, bytes) = self.send(method, uri, "application/json", body).await;
+        let (status, _, bytes) = self.send(method, uri, "application/json", body).await;
         (
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
@@ -308,10 +309,20 @@ impl TestClient {
         content_type: &str,
         body: &str,
     ) -> (StatusCode, String) {
-        let (status, bytes) = self
+        let (status, _, bytes) = self
             .send(method, uri, content_type, Body::from(body.to_owned()))
             .await;
         (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Envoie une requête sans corps ; retourne les en-têtes et le corps de la réponse.
+    ///
+    /// # Panics
+    ///
+    /// Si la requête ne peut pas être traitée.
+    pub async fn request_headers(&self, method: Method, uri: &str) -> (HeaderMap, String) {
+        let (_, headers, bytes) = self.send(method, uri, "text/plain", Body::empty()).await;
+        (headers, String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Exécute une requête GraphQL ; retourne la réponse (`data`, `errors`).
@@ -332,7 +343,7 @@ impl TestClient {
         uri: &str,
         content_type: &str,
         body: Body,
-    ) -> (StatusCode, axum::body::Bytes) {
+    ) -> (StatusCode, HeaderMap, axum::body::Bytes) {
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
@@ -342,15 +353,40 @@ impl TestClient {
         }
         let request = request.body(body).expect("requête valide");
         let response = self.router.clone().oneshot(request).await.expect("réponse");
-        let status = response.status();
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("corps de réponse")
-            .to_bytes();
-        (status, bytes)
+        let (parts, body) = response.into_parts();
+        let bytes = body.collect().await.expect("corps de réponse").to_bytes();
+        (parts.status, parts.headers, bytes)
     }
+}
+
+/// Avec `TEST_CACHE_URL` (feature `redis`), cache Redis dans un espace de noms
+/// propre au client : les tests exécutés en parallèle ne partagent rien.
+#[cfg(feature = "redis")]
+async fn test_cache(app: App) -> App {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CLIENTS: AtomicU64 = AtomicU64::new(0);
+    let Ok(url) = std::env::var("TEST_CACHE_URL") else {
+        return app;
+    };
+    let namespace = format!(
+        "test-{}-{}-{}",
+        std::process::id(),
+        CLIENTS.fetch_add(1, Ordering::Relaxed),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+    let ttl = std::time::Duration::from_secs(60);
+    let cache = crate::cache::RedisCache::connect(&url, &namespace, ttl)
+        .await
+        .expect("connexion au Redis de test");
+    app.cache(cache)
+}
+
+/// Cache par défaut de l'application (en mémoire) ; même signature que la
+/// version Redis.
+#[cfg(not(feature = "redis"))]
+#[allow(clippy::unused_async)]
+async fn test_cache(app: App) -> App {
+    app
 }
 
 /// Vérification CRUD : génère des données de test et enchaîne les requêtes.

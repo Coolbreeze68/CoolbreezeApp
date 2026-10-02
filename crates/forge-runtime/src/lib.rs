@@ -7,6 +7,7 @@
 mod aggregate;
 mod app;
 pub mod auth;
+pub mod cache;
 pub mod cli;
 mod columns;
 mod compute;
@@ -16,6 +17,7 @@ mod graphql;
 pub mod hooks;
 mod links;
 pub mod migration;
+pub mod observability;
 mod openapi;
 mod parameters;
 mod payload;
@@ -27,7 +29,7 @@ mod rules;
 pub mod testing;
 mod values;
 
-pub use app::{App, AppState};
+pub use app::{App, AppState, DEFAULT_CACHE_CAPACITY, DEFAULT_CACHE_TTL};
 
 /// Valeurs et types des formules, pour implémenter des fonctions personnalisées.
 /// Valeurs manipulées par les fonctions de formule personnalisées.

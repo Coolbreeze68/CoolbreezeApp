@@ -1,7 +1,9 @@
 //! Assemblage d'une application : schéma, ressources, routes et résolveurs personnalisés.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_graphql::dynamic::{Field, Type};
 use axum::{Router, middleware};
@@ -10,12 +12,21 @@ use forge_schema::Model;
 use forge_schema::spec::Table;
 use sea_orm::DatabaseConnection;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
 use crate::auth::{self, AuthConfig};
+use crate::cache::{Cache, MemoryCache, Reads};
 use crate::error::Error;
 use crate::graphql::{self, Extensions};
-use crate::hooks::Hooks;
+use crate::hooks::{Hooks, Written};
 use crate::resource::{ForgeEntity, Resource, Service};
-use crate::{openapi, parameters, rest};
+use crate::{observability, openapi, parameters, rest};
+
+/// Cache par défaut : en mémoire, entrées valables 60 secondes.
+pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(60);
+/// Nombre maximal d'entrées du cache en mémoire par défaut.
+pub const DEFAULT_CACHE_CAPACITY: u64 = 10_000;
 
 /// État partagé par tous les handlers, y compris les routes personnalisées.
 #[derive(Debug, Clone)]
@@ -25,6 +36,8 @@ pub struct AppState {
     pub(crate) auth: Arc<AuthConfig>,
     /// Fonctions de formule, implémentations comprises.
     pub(crate) functions: Arc<FunctionRegistry>,
+    /// Cache des lectures, s'il est activé.
+    pub(crate) reads: Option<Arc<Reads>>,
 }
 
 impl AppState {
@@ -34,6 +47,41 @@ impl AppState {
 
     pub fn schema(&self) -> &Model {
         &self.model
+    }
+
+    /// Invalide les lectures en cache qui dépendent de `tables`. À appeler après
+    /// une écriture faite hors de forge (route personnalisée), une fois validée.
+    pub async fn invalidate(&self, tables: &[&str]) {
+        if let Some(reads) = &self.reads {
+            reads
+                .invalidate(tables.iter().map(|t| (*t).to_owned()).collect())
+                .await;
+        }
+    }
+
+    /// Lecture de `table` via le cache, s'il est activé (voir [`crate::cache`]).
+    pub(crate) async fn cached<T, F, Fut>(
+        &self,
+        table: &str,
+        request: &str,
+        load: F,
+    ) -> Result<T, Error>
+    where
+        T: Serialize + DeserializeOwned,
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T, Error>>,
+    {
+        match &self.reads {
+            Some(reads) => reads.get_or_load(table, request, load).await,
+            None => load().await,
+        }
+    }
+
+    /// Invalide les tables écrites par une requête, après validation de sa transaction.
+    pub(crate) async fn invalidate_written(&self, written: Written) {
+        if let Some(reads) = &self.reads {
+            reads.invalidate(written.into_tables()).await;
+        }
     }
 
     /// Table du schéma servie par une ressource enregistrée.
@@ -57,6 +105,7 @@ pub struct App {
     router: Router<AppState>,
     graphql: Extensions,
     functions: FunctionRegistry,
+    cache: Option<Arc<dyn Cache>>,
     /// Erreurs d'enregistrement de fonctions, rapportées au démarrage.
     errors: Vec<String>,
 }
@@ -72,6 +121,10 @@ impl App {
             services: BTreeMap::new(),
             router: parameters::router().merge(auth::router()),
             graphql: Extensions::default(),
+            cache: Some(Arc::new(MemoryCache::new(
+                DEFAULT_CACHE_TTL,
+                DEFAULT_CACHE_CAPACITY,
+            ))),
         })
     }
 
@@ -105,6 +158,21 @@ impl App {
         if let Err(message) = self.functions.implement(name, implementation) {
             self.errors.push(message);
         }
+        self
+    }
+
+    /// Remplace le cache des lectures (par défaut : en mémoire, voir
+    /// [`DEFAULT_CACHE_TTL`]), par exemple par un cache Redis partagé.
+    #[must_use]
+    pub fn cache(mut self, cache: impl Cache + 'static) -> Self {
+        self.cache = Some(Arc::new(cache));
+        self
+    }
+
+    /// Désactive le cache des lectures.
+    #[must_use]
+    pub fn without_cache(mut self) -> Self {
+        self.cache = None;
         self
     }
 
@@ -181,22 +249,28 @@ impl App {
         let mut router = self
             .router
             .merge(graphql::router(&self.model, &services, self.graphql)?)
-            .merge(openapi::router(&self.model)?);
+            .merge(openapi::router(&self.model)?)
+            .merge(observability::router());
         for service in services.values() {
             router = router.merge(rest::router(service));
         }
+        let reads = self
+            .cache
+            .map(|cache| Arc::new(Reads::new(cache, &self.model)));
         let state = AppState {
             db,
             model: self.model,
             auth: Arc::new(auth),
             functions: Arc::new(self.functions),
+            reads,
         };
-        Ok(router
+        let router = router
             .layer(middleware::from_fn_with_state(
                 state.clone(),
                 auth::authenticate,
             ))
-            .with_state(state))
+            .with_state(state);
+        Ok(observability::layer(router))
     }
 }
 

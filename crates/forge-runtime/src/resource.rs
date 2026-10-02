@@ -14,18 +14,17 @@ use forge_schema::spec::{Action, ColumnType, Table};
 use forge_schema::value::TypedValue;
 use rust_decimal::Decimal;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseTransaction, EntityTrait,
-    IntoActiveModel, ModelTrait, PaginatorTrait, PrimaryKeyTrait, QueryFilter, QuerySelect,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, ModelTrait,
+    PaginatorTrait, PrimaryKeyTrait, QueryFilter, QuerySelect, TransactionTrait,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::aggregate::AggregateQuery;
 use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{Error, RowError};
-use crate::hooks::{HookContext, Hooks};
+use crate::hooks::{HookContext, Hooks, Written};
 use crate::payload::{self, Mode, Payload};
 use crate::query::ListQuery;
 use crate::rules::{self, Scope};
@@ -62,7 +61,7 @@ pub(crate) fn column_of<E: EntityTrait>(name: &str) -> E::Column {
 }
 
 /// Page d'une liste : enregistrements, numéro de page et total.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Listing {
     pub data: Vec<JsonValue>,
     pub page: u64,
@@ -253,26 +252,20 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
         Ok(())
     }
 
-    /// Création dans la transaction `txn` ; `allowed` : portée de création.
+    /// Création dans la transaction de `ctx` ; `allowed` : portée de création.
     async fn insert(
         &self,
         state: &AppState,
-        txn: &DatabaseTransaction,
-        user: &CurrentUser,
+        ctx: &HookContext<'_>,
         allowed: &Scope,
         Payload { values, links }: Payload,
     ) -> Result<E::Model, Error> {
-        let table = self.table(state);
-        let ctx = HookContext {
-            txn,
-            model: &state.model,
-            user,
-        };
+        let (table, txn) = (self.table(state), ctx.txn);
         let mut record = <E::ActiveModel as ActiveModelTrait>::default();
         assign::<E>(&mut record, values)?;
-        stamp::<E>(&mut record, Some(user.id))?;
-        self.hooks.before_create(&ctx, &mut record).await?;
-        self.hooks.validate(&ctx, &record).await?;
+        stamp::<E>(&mut record, Some(ctx.user.id))?;
+        self.hooks.before_create(ctx, &mut record).await?;
+        self.hooks.validate(ctx, &record).await?;
         let model = record.insert(txn).await?;
         let id = id_of::<E>(&model);
         // La condition de création porte sur l'enregistrement tel qu'il serait créé.
@@ -281,55 +274,53 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
         }
         self.save_links(state, txn, id, links).await?;
         let changes = compute::neighborhood(txn, &state.model, &table.name, id, false).await?;
-        compute::propagate(txn, &state.model, &state.functions, changes).await?;
+        ctx.written.add(&table.name);
+        ctx.written
+            .extend(compute::propagate(txn, &state.model, &state.functions, changes).await?);
         // Relu : les formules persistées viennent d'être calculées.
         let model = self.find(txn, id, &Scope::All).await?;
-        self.hooks.after_create(&ctx, &model).await?;
+        self.hooks.after_create(ctx, &model).await?;
         Ok(model)
     }
 
-    /// Modification dans la transaction `txn`.
+    /// Modification dans la transaction de `ctx`.
     async fn modify(
         &self,
         state: &AppState,
-        txn: &DatabaseTransaction,
-        user: &CurrentUser,
+        ctx: &HookContext<'_>,
         (readable, allowed): (&Scope, &Scope),
         id: i64,
         Payload { values, links }: Payload,
     ) -> Result<E::Model, Error> {
-        let table = self.table(state);
+        let (table, txn) = (self.table(state), ctx.txn);
         let existing = self.find(txn, id, readable).await?;
         // Modifier exige le droit sur l'enregistrement, avant et après modification.
         if !rules::allows::<E>(txn, allowed, id).await? {
             return Err(out_of_scope(&table.name));
         }
-        let ctx = HookContext {
-            txn,
-            model: &state.model,
-            user,
-        };
         // Voisinage avant modification : références et liens qui vont peut-être changer.
         let mut changes = compute::neighborhood(txn, &state.model, &table.name, id, false).await?;
 
         let mut record = existing.into_active_model();
         assign::<E>(&mut record, values)?;
         stamp::<E>(&mut record, None)?;
-        self.hooks.before_update(&ctx, &mut record).await?;
-        self.hooks.validate(&ctx, &record).await?;
+        self.hooks.before_update(ctx, &mut record).await?;
+        self.hooks.validate(ctx, &record).await?;
         let model = record.update(txn).await?;
         if !rules::allows::<E>(txn, allowed, id).await? {
             return Err(out_of_scope(&table.name));
         }
         self.save_links(state, txn, id, links).await?;
         changes.merge(compute::neighborhood(txn, &state.model, &table.name, id, false).await?);
-        compute::propagate(txn, &state.model, &state.functions, changes).await?;
+        ctx.written.add(&table.name);
+        ctx.written
+            .extend(compute::propagate(txn, &state.model, &state.functions, changes).await?);
         let model = if model_has_persisted(table) {
             self.find(txn, id, &Scope::All).await?
         } else {
             model
         };
-        self.hooks.after_update(&ctx, &model).await?;
+        self.hooks.after_update(ctx, &model).await?;
         Ok(model)
     }
 
@@ -339,16 +330,17 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
     async fn import_row(
         &self,
         state: &AppState,
-        txn: &DatabaseTransaction,
-        user: &CurrentUser,
+        ctx: &HookContext<'_>,
         scopes: &ImportScopes,
         row: ImportRow,
     ) -> Result<bool, Error> {
         let body = row.body?;
-        let savepoint = txn.begin().await?;
-        let result = self
-            .write_row(state, &savepoint, user, scopes, row.id, body)
-            .await;
+        let savepoint = ctx.txn.begin().await?;
+        let row_ctx = HookContext {
+            txn: &savepoint,
+            ..*ctx
+        };
+        let result = self.write_row(state, &row_ctx, scopes, row.id, body).await;
         match result {
             Ok(_) => savepoint.commit().await?,
             Err(_) => savepoint.rollback().await?,
@@ -359,8 +351,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
     async fn write_row(
         &self,
         state: &AppState,
-        txn: &DatabaseTransaction,
-        user: &CurrentUser,
+        ctx: &HookContext<'_>,
         scopes: &ImportScopes,
         id: Option<i64>,
         body: JsonValue,
@@ -373,7 +364,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
                     .as_ref()
                     .ok_or_else(|| denied(table, "créer"))?;
                 let payload = payload::parse(table, body, Mode::Create)?;
-                self.insert(state, txn, user, allowed, payload).await?;
+                self.insert(state, ctx, allowed, payload).await?;
                 Ok(true)
             }
             Some(id) => {
@@ -382,7 +373,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
                     .as_ref()
                     .ok_or_else(|| denied(table, "modifier"))?;
                 let payload = payload::parse(table, body, Mode::Update)?;
-                self.modify(state, txn, user, (&scopes.read, allowed), id, payload)
+                self.modify(state, ctx, (&scopes.read, allowed), id, payload)
                     .await?;
                 Ok(false)
             }
@@ -432,22 +423,27 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
     ) -> Result<Listing, Error> {
         let table = self.table(state);
         let scope = rules::scope(state, table, Action::Read, user).await?;
-        let mut select = query.apply(table, E::find());
-        if let Some(condition) = scope.condition() {
-            select = select.filter(condition);
-        }
-        let total = select.clone().count(&state.db).await?;
-        let models = select
-            .offset((query.page - 1) * query.per_page)
-            .limit(query.per_page)
-            .all(&state.db)
-            .await?;
-        Ok(Listing {
-            data: self.to_json(state, &state.db, models).await?,
-            page: query.page,
-            per_page: query.per_page,
-            total,
-        })
+        let request = format!("list {query:?} {scope:?}");
+        state
+            .cached(&table.name, &request, || async {
+                let mut select = query.apply(table, E::find());
+                if let Some(condition) = scope.condition() {
+                    select = select.filter(condition);
+                }
+                let total = select.clone().count(&state.db).await?;
+                let models = select
+                    .offset((query.page - 1) * query.per_page)
+                    .limit(query.per_page)
+                    .all(&state.db)
+                    .await?;
+                Ok(Listing {
+                    data: self.to_json(state, &state.db, models).await?,
+                    page: query.page,
+                    per_page: query.per_page,
+                    total,
+                })
+            })
+            .await
     }
 
     async fn all(
@@ -477,8 +473,13 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
         id: i64,
     ) -> Result<JsonValue, Error> {
         let readable = rules::scope(state, self.table(state), Action::Read, user).await?;
-        let model = self.find(&state.db, id, &readable).await?;
-        self.one_json(state, &state.db, model).await
+        let request = format!("read {id} {readable:?}");
+        state
+            .cached(&self.table, &request, || async {
+                let model = self.find(&state.db, id, &readable).await?;
+                self.one_json(state, &state.db, model).await
+            })
+            .await
     }
 
     async fn read_many(
@@ -504,7 +505,12 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
     ) -> Result<JsonValue, Error> {
         let table = self.table(state);
         let scope = rules::scope(state, table, Action::Read, user).await?;
-        query.run::<E>(&state.db, table, &scope).await
+        let request = format!("aggregate {query:?} {scope:?}");
+        state
+            .cached(&table.name, &request, || {
+                query.run::<E>(&state.db, table, &scope)
+            })
+            .await
     }
 
     async fn create(
@@ -517,10 +523,12 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
         // Portées calculées avant la transaction : elles lisent la base hors transaction.
         let allowed = rules::scope(state, table, Action::Create, user).await?;
         let payload = payload::parse(table, body, Mode::Create)?;
-        let txn = state.db.begin().await?;
-        let model = self.insert(state, &txn, user, &allowed, payload).await?;
+        let (txn, written) = (state.db.begin().await?, Written::default());
+        let ctx = HookContext::new(&txn, state, user, &written);
+        let model = self.insert(state, &ctx, &allowed, payload).await?;
         let json = self.one_json(state, &txn, model).await?;
         txn.commit().await?;
+        state.invalidate_written(written).await;
         Ok(json)
     }
 
@@ -535,12 +543,14 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
         let readable = rules::scope(state, table, Action::Read, user).await?;
         let allowed = rules::scope(state, table, Action::Update, user).await?;
         let payload = payload::parse(table, body, Mode::Update)?;
-        let txn = state.db.begin().await?;
+        let (txn, written) = (state.db.begin().await?, Written::default());
+        let ctx = HookContext::new(&txn, state, user, &written);
         let model = self
-            .modify(state, &txn, user, (&readable, &allowed), id, payload)
+            .modify(state, &ctx, (&readable, &allowed), id, payload)
             .await?;
         let json = self.one_json(state, &txn, model).await?;
         txn.commit().await?;
+        state.invalidate_written(written).await;
         Ok(json)
     }
 
@@ -553,17 +563,16 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
         if !rules::allows::<E>(&txn, &allowed, id).await? {
             return Err(out_of_scope(&table.name));
         }
-        let ctx = HookContext {
-            txn: &txn,
-            model: &state.model,
-            user,
-        };
+        let written = Written::default();
+        let ctx = HookContext::new(&txn, state, user, &written);
         self.hooks.before_delete(&ctx, &model).await?;
         // Capturé avant suppression : ce qui référence l'enregistrement va changer.
         let changes = compute::neighborhood(&txn, &state.model, &table.name, id, true).await?;
         E::delete_by_id(id).exec(&txn).await?;
-        compute::propagate(&txn, &state.model, &state.functions, changes).await?;
+        written.add(&table.name);
+        written.extend(compute::propagate(&txn, &state.model, &state.functions, changes).await?);
         txn.commit().await?;
+        state.invalidate_written(written).await;
         Ok(())
     }
 
@@ -579,12 +588,13 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
             create: optional_scope(state, table, Action::Create, user).await?,
             update: optional_scope(state, table, Action::Update, user).await?,
         };
-        let txn = state.db.begin().await?;
+        let (txn, written) = (state.db.begin().await?, Written::default());
+        let ctx = HookContext::new(&txn, state, user, &written);
         let mut report = ImportReport::default();
         let mut errors = Vec::new();
         for row in rows {
             let line = row.line;
-            match self.import_row(state, &txn, user, &scopes, row).await {
+            match self.import_row(state, &ctx, &scopes, row).await {
                 Ok(true) => report.created += 1,
                 Ok(false) => report.updated += 1,
                 // Une erreur interne interrompt l'import (la transaction est annulée).
@@ -597,6 +607,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
             return Err(Error::Import(errors));
         }
         txn.commit().await?;
+        state.invalidate_written(written).await;
         Ok(report)
     }
 }

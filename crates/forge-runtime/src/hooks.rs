@@ -1,9 +1,12 @@
 //! Points d'extension par table, implémentés dans `src/custom/hooks/<table>.rs`.
 
+use std::collections::BTreeSet;
 use std::future::Future;
+use std::sync::{Mutex, PoisonError};
 
 use sea_orm::{DatabaseTransaction, EntityTrait};
 
+use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::error::Error;
 
@@ -14,9 +17,24 @@ pub struct HookContext<'a> {
     pub(crate) txn: &'a DatabaseTransaction,
     pub(crate) model: &'a forge_schema::Model,
     pub(crate) user: &'a CurrentUser,
+    pub(crate) written: &'a Written,
 }
 
-impl HookContext<'_> {
+impl<'a> HookContext<'a> {
+    pub(crate) fn new(
+        txn: &'a DatabaseTransaction,
+        state: &'a AppState,
+        user: &'a CurrentUser,
+        written: &'a Written,
+    ) -> Self {
+        Self {
+            txn,
+            model: &state.model,
+            user,
+            written,
+        }
+    }
+
     /// Transaction en cours : à utiliser pour toute lecture ou écriture.
     pub fn db(&self) -> &DatabaseTransaction {
         self.txn
@@ -30,6 +48,34 @@ impl HookContext<'_> {
     /// Utilisateur à l'origine de la requête.
     pub fn user(&self) -> &CurrentUser {
         self.user
+    }
+
+    /// Signale une table modifiée par le hook (`ctx.db()`), pour que les lectures
+    /// en cache qui en dépendent soient invalidées une fois la transaction validée.
+    pub fn modified(&self, table: &str) {
+        self.written.add(table);
+    }
+}
+
+/// Tables écrites par une requête, à invalider dans le cache après validation.
+#[derive(Debug, Default)]
+pub(crate) struct Written(Mutex<BTreeSet<String>>);
+
+impl Written {
+    pub(crate) fn add(&self, table: &str) {
+        self.tables().insert(table.to_owned());
+    }
+
+    pub(crate) fn extend(&self, tables: BTreeSet<String>) {
+        self.tables().extend(tables);
+    }
+
+    pub(crate) fn into_tables(self) -> BTreeSet<String> {
+        self.0.into_inner().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn tables(&self) -> std::sync::MutexGuard<'_, BTreeSet<String>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

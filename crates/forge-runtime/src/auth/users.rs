@@ -368,6 +368,8 @@ async fn delete(
     user::Entity::delete_by_id(account.id)
         .exec(&state.db)
         .await?;
+    // `owner` des enregistrements créés par ce compte passe à `null`.
+    state.invalidate(&["users"]).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
