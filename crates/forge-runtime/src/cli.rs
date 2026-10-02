@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand};
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 use tracing_subscriber::EnvFilter;
 
@@ -82,24 +82,35 @@ async fn execute<M: MigratorTrait>(
     cli: Cli,
     app: impl FnOnce() -> Result<App, Error>,
 ) -> Result<(), Error> {
-    let db = connect(&cli.database_url).await?;
     match cli.command {
-        Some(Command::Migrate { action }) => match action {
-            MigrateAction::Up => Ok(M::up(&db, None).await?),
-            MigrateAction::Down => Ok(M::down(&db, Some(1)).await?),
-            MigrateAction::Status => Ok(M::status(&db).await?),
-        },
+        Some(Command::Migrate { action }) => {
+            let db = connect(&cli.database_url, true).await?;
+            match action {
+                MigrateAction::Up => Ok(M::up(&db, None).await?),
+                MigrateAction::Down => Ok(M::down(&db, Some(1)).await?),
+                MigrateAction::Status => Ok(M::status(&db).await?),
+            }
+        }
         None => {
             if cli.auto_migrate {
+                let db = connect(&cli.database_url, true).await?;
                 M::up(&db, None).await?;
+                db.close().await?;
             }
-            serve(app()?, db, cli.addr).await
+            serve(app()?, connect(&cli.database_url, false).await?, cli.addr).await
         }
     }
 }
 
-pub(crate) async fn connect(url: &str) -> Result<DatabaseConnection, Error> {
-    Database::connect(url)
+/// Connexion à la base. Pour migrer SQLite, une seule connexion est ouverte :
+/// les reconstructions de tables désactivent les clés étrangères, réglage propre
+/// à chaque connexion (voir [`crate::migration`]).
+pub(crate) async fn connect(url: &str, migrating: bool) -> Result<DatabaseConnection, Error> {
+    let mut options = ConnectOptions::new(url);
+    if migrating && url.starts_with("sqlite:") {
+        options.max_connections(1);
+    }
+    Database::connect(options)
         .await
         .map_err(|err| Error::Config(format!("connexion à la base impossible : {err}")))
 }

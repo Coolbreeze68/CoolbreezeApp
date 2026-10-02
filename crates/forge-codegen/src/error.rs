@@ -12,12 +12,12 @@ pub enum Error {
     #[error("{path} : {message}")]
     Snapshot { path: PathBuf, message: String },
     #[error(
-        "le stockage du schéma a changé depuis la dernière migration ({changes}). \
-         La génération de migrations incrémentales arrive en phase 2 : en attendant, \
-         restaurez la structure précédente ou recréez la base et supprimez \
-         `.forge/snapshot.json` et `backend/src/migrations/`."
+        "la migration supprimerait ou convertirait des données :\n{}\n\
+         Relancez avec `--allow-destructive` pour la générer quand même, ou utilisez \
+         `renamed_from` si une colonne a seulement été renommée.",
+        changes.iter().map(|c| format!("  - {c}")).collect::<Vec<_>>().join("\n")
     )]
-    StorageChanged { changes: String },
+    Destructive { changes: Vec<String> },
 }
 
 impl Error {

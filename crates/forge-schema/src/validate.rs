@@ -276,6 +276,21 @@ impl<'a> Validator<'a> {
                     );
                 }
                 self.check_column(&path, column);
+                if let Some(old) = &column.renamed_from {
+                    let taken = table.columns.iter().any(|c| c.name == *old)
+                        || table
+                            .columns
+                            .iter()
+                            .filter(|c| c.renamed_from.as_ref() == Some(old))
+                            .count()
+                            > 1;
+                    if taken {
+                        self.error(
+                            format!("{path}.renamed_from"),
+                            format!("`{old}` est encore une colonne de la table, ou l'ancien nom d'une autre"),
+                        );
+                    }
+                }
             }
         }
     }

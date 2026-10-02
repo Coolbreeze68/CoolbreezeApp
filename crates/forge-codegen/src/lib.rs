@@ -4,13 +4,16 @@
 //! - `backend/src/generated/` est réécrit à chaque fois (fichiers obsolètes supprimés) ;
 //! - le code utilisateur (`src/custom/`, `main.rs`, `Cargo.toml`) n'est créé qu'une fois ;
 //! - une migration n'est créée que si la structure de stockage a changé
-//!   (comparée à `.forge/snapshot.json`).
+//!   (comparée à `.forge/snapshot.json`) ; une migration qui perdrait des données
+//!   exige [`Options::allow_destructive`].
 //!
 //! Deux générations successives ne produisent aucun changement.
 
 mod backend;
+mod diff;
 mod error;
 mod layout;
+mod migration;
 mod render;
 mod writer;
 
@@ -19,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use forge_schema::Model;
 
+pub use diff::{Change, Hints, Risk};
 pub use error::Error;
 pub use layout::Layout;
 pub use writer::{OutputFile, Policy, Report};
@@ -34,6 +38,8 @@ const MIGRATIONS_DIR: &str = "backend/src/migrations";
 pub struct Options {
     /// Chemin de la crate `forge-runtime`, relatif au dossier `backend/` du projet.
     pub runtime_path: String,
+    /// Autorise une migration qui supprime ou convertit des données.
+    pub allow_destructive: bool,
 }
 
 /// Génère (ou met à jour) le projet situé dans `project`.
@@ -56,9 +62,31 @@ pub fn generate(
     let layout = Layout::of(model);
     let mut migrations = existing_migrations(project)?;
     let mut files = Vec::new();
-    if let Some((name, migration)) = plan_migration(project, &layout, &migrations, &renderer)? {
-        migrations.push(name);
-        files.push(migration);
+    if let Some(migration) = plan_migration(project, &layout, model, &migrations, &renderer)? {
+        let destructive: Vec<String> = migration
+            .changes
+            .iter()
+            .filter_map(|c| match c.risk() {
+                Risk::DataLoss(reason) => Some(reason),
+                _ => None,
+            })
+            .collect();
+        if !destructive.is_empty() && !options.allow_destructive {
+            return Err(Error::Destructive {
+                changes: destructive,
+            });
+        }
+        report
+            .warnings
+            .extend(migration.changes.iter().filter_map(|c| match c.risk() {
+                Risk::MayFail(reason) => {
+                    Some(format!("{} peut échouer : {reason}", migration.name))
+                }
+                _ => None,
+            }));
+        report.migration = Some((migration.name.clone(), migration.changes));
+        migrations.push(migration.name);
+        files.push(migration.file);
         files.push(OutputFile {
             path: PathBuf::from(SNAPSHOT),
             content: snapshot_json(&layout),
@@ -133,58 +161,34 @@ fn snapshot_json(layout: &Layout) -> String {
 fn plan_migration(
     project: &Path,
     layout: &Layout,
+    model: &Model,
     migrations: &[String],
     renderer: &Renderer,
-) -> Result<Option<(String, OutputFile)>, Error> {
+) -> Result<Option<migration::Migration>, Error> {
     let path = project.join(SNAPSHOT);
     let previous = match fs::read_to_string(&path) {
-        Ok(content) => {
-            Some(
-                serde_json::from_str::<Layout>(&content).map_err(|err| Error::Snapshot {
-                    path: path.clone(),
-                    message: err.to_string(),
-                })?,
-            )
+        Ok(content) => serde_json::from_str::<Layout>(&content).map_err(|err| Error::Snapshot {
+            path: path.clone(),
+            message: err.to_string(),
+        })?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && migrations.is_empty() => {
+            Layout::empty()
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Error::Snapshot {
+                path,
+                message: "fichier manquant alors que des migrations existent".into(),
+            });
+        }
         Err(err) => return Err(Error::io(&path)(err)),
     };
-    match previous {
-        None if migrations.is_empty() => {
-            let name = "m0001_init".to_owned();
-            let file = backend::initial_migration(renderer, &name, layout)?;
-            Ok(Some((name, file)))
-        }
-        None => Err(Error::Snapshot {
-            path,
-            message: "fichier manquant alors que des migrations existent".into(),
-        }),
-        Some(previous) if previous == *layout => Ok(None),
-        Some(previous) => Err(Error::StorageChanged {
-            changes: summarize_changes(&previous, layout),
-        }),
-    }
-}
-
-fn summarize_changes(previous: &Layout, current: &Layout) -> String {
-    let mut tables: Vec<&str> = current
-        .tables
-        .iter()
-        .filter(|t| !previous.tables.contains(t))
-        .chain(
-            previous
-                .tables
-                .iter()
-                .filter(|t| !current.tables.contains(t)),
-        )
-        .map(|t| t.name.as_str())
-        .collect();
-    tables.sort_unstable();
-    tables.dedup();
-    if previous.join_tables != current.join_tables {
-        tables.push("tables de jointure");
-    }
-    format!("concerne : {}", tables.join(", "))
+    migration::plan(
+        renderer,
+        migrations.len() + 1,
+        &previous,
+        layout,
+        &Hints::of(model),
+    )
 }
 
 /// Migrations présentes dans `backend/src/migrations/`, triées.

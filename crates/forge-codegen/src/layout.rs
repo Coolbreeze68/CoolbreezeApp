@@ -56,6 +56,18 @@ pub enum Storage {
 }
 
 impl Storage {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Text => "text",
+            Self::BigInteger => "big_integer",
+            Self::Decimal => "decimal",
+            Self::Boolean => "boolean",
+            Self::Date => "date",
+            Self::Timestamp => "timestamp",
+        }
+    }
+
     fn of(ty: ColumnType) -> Option<Self> {
         Some(match ty {
             ColumnType::String | ColumnType::Enum => Self::String,
@@ -71,6 +83,18 @@ impl Storage {
 }
 
 impl Layout {
+    /// Base vide, point de départ de la première migration.
+    pub fn empty() -> Self {
+        Self {
+            tables: Vec::new(),
+            join_tables: Vec::new(),
+        }
+    }
+
+    pub fn table(&self, name: &str) -> Option<&TableLayout> {
+        self.tables.iter().find(|t| t.name == name)
+    }
+
     pub fn of(model: &Model) -> Self {
         let tables = model
             .tables()

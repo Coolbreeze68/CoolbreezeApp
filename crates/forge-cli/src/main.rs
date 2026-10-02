@@ -39,6 +39,9 @@ enum Command {
         /// Chemin de la crate `forge-runtime` (utilisé à la création de `backend/Cargo.toml`).
         #[arg(long)]
         runtime_path: Option<PathBuf>,
+        /// Génère la migration même si elle supprime ou convertit des données.
+        #[arg(long)]
+        allow_destructive: bool,
     },
     /// Applique ou annule les migrations (via `cargo run` dans `backend/`).
     Migrate {
@@ -85,7 +88,11 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             schema,
             runtime_path,
         } => new(&dir, &schema, runtime_path.as_deref()),
-        Command::Generate { dir, runtime_path } => generate(&dir, runtime_path.as_deref()),
+        Command::Generate {
+            dir,
+            runtime_path,
+            allow_destructive,
+        } => generate(&dir, runtime_path.as_deref(), allow_destructive),
         Command::Migrate { action, dir } => migrate(&dir, action),
         Command::Validate { schema } => validate(&schema),
         Command::Schema => {
@@ -137,7 +144,7 @@ fn new(dir: &Path, schema: &Path, runtime_path: Option<&Path>) -> anyhow::Result
     }
     std::fs::create_dir_all(dir).with_context(|| format!("création de `{}`", dir.display()))?;
     std::fs::copy(schema, dir.join("forge.json")).context("copie du schéma")?;
-    let code = generate(dir, runtime_path)?;
+    let code = generate(dir, runtime_path, false)?;
     if code == ExitCode::SUCCESS {
         println!(
             "\nProjet créé. Pour démarrer l'API :\n  cd {}/backend && cargo run",
@@ -147,7 +154,11 @@ fn new(dir: &Path, schema: &Path, runtime_path: Option<&Path>) -> anyhow::Result
     Ok(code)
 }
 
-fn generate(dir: &Path, runtime_path: Option<&Path>) -> anyhow::Result<ExitCode> {
+fn generate(
+    dir: &Path,
+    runtime_path: Option<&Path>,
+    allow_destructive: bool,
+) -> anyhow::Result<ExitCode> {
     let Some((source, model)) = load(&dir.join("forge.json"))? else {
         return Ok(ExitCode::FAILURE);
     };
@@ -158,9 +169,17 @@ fn generate(dir: &Path, runtime_path: Option<&Path>) -> anyhow::Result<ExitCode>
     let backend = dir.canonicalize()?.join("backend");
     let options = Options {
         runtime_path: relative_path(&backend, &runtime).display().to_string(),
+        allow_destructive,
     };
 
     let report = forge_codegen::generate(dir, &source, &model, &options)?;
+    if let Some((name, changes)) = &report.migration {
+        println!("Migration {name} :");
+        for change in changes {
+            println!("  - {change}");
+        }
+        println!("Appliquez-la avec `forge migrate`.\n");
+    }
     for (label, paths) in [
         ("créé", &report.created),
         ("mis à jour", &report.updated),

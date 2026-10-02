@@ -59,8 +59,8 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../templates/backend/main.rs.j2"),
     ),
     (
-        "backend/migration_init.rs",
-        include_str!("../../../templates/backend/migration_init.rs.j2"),
+        "backend/migration.rs",
+        include_str!("../../../templates/backend/migration.rs.j2"),
     ),
     (
         "backend/migrations_mod.rs",

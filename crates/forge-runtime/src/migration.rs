@@ -1,11 +1,20 @@
-//! Migrations : tables système de forge et outils pour les migrations générées.
+//! Migrations : tables système de forge et exécution des migrations générées.
 //!
-//! Les migrations générées décrivent les tables avec [`Plan`], qui ajoute les
-//! colonnes système et gère les clés étrangères selon la base :
-//! SQLite les exige dans le `CREATE TABLE` (et accepte une table cible créée plus tard),
-//! PostgreSQL et MySQL les reçoivent une fois toutes les tables créées.
+//! Une migration générée décrit ses changements avec un [`Plan`] : création et
+//! suppression de tables, ajout, renommage, modification et suppression de colonnes,
+//! contraintes d'unicité et clés étrangères. Le plan applique ces opérations dans un
+//! ordre sûr, quel que soit l'ordre de déclaration.
+//!
+//! PostgreSQL et MySQL exécutent les opérations telles quelles. SQLite ne sait ni
+//! modifier une colonne ni ajouter une clé étrangère à une table existante : chaque
+//! table modifiée y est donc reconstruite à partir de sa définition complète
+//! ([`Plan::redefine`]), données recopiées, clés étrangères désactivées pendant
+//! l'opération puis vérifiées. Cela suppose une connexion unique à la base, ce que
+//! garantissent la ligne de commande générée et les outils de test.
 
-use sea_orm::DbBackend;
+use std::collections::BTreeMap;
+
+use sea_orm::{ConnectionTrait, DbBackend};
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::schema::{
     big_integer_null, big_pk_auto, string, text_null, timestamp_with_time_zone,
@@ -18,8 +27,8 @@ pub fn system() -> Vec<Box<dyn MigrationTrait>> {
     vec![Box::new(SystemTables)]
 }
 
-/// Suppression d'une ligne référencée.
-#[derive(Debug, Clone, Copy)]
+/// Effet de la suppression d'une ligne référencée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnDelete {
     /// Interdite tant que la référence existe (référence obligatoire).
     Restrict,
@@ -39,11 +48,220 @@ impl From<OnDelete> for ForeignKeyAction {
     }
 }
 
-/// Création d'un ensemble de tables et de leurs clés étrangères.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
+struct Reference {
+    column: String,
+    target: String,
+    on_delete: OnDelete,
+}
+
+/// Définition complète d'une table métier. `id`, `owner`, `created_at` et
+/// `updated_at` sont ajoutées automatiquement.
+#[derive(Debug, Clone, Default)]
+pub struct TableDef {
+    columns: Vec<ColumnDef>,
+    unique: Vec<String>,
+    references: Vec<Reference>,
+}
+
+impl TableDef {
+    pub fn col(&mut self, column: impl IntoColumnDef) -> &mut Self {
+        self.columns.push(column.into_column_def());
+        self
+    }
+
+    /// Valeurs uniques dans `column` (index unique `uq_<table>_<colonne>`).
+    pub fn unique(&mut self, column: &str) -> &mut Self {
+        self.unique.push(column.to_owned());
+        self
+    }
+
+    /// Clé étrangère `column → target.id` (contrainte `fk_<table>_<colonne>`).
+    pub fn reference(&mut self, column: &str, target: &str, on_delete: OnDelete) -> &mut Self {
+        self.references.push(Reference {
+            column: column.to_owned(),
+            target: target.to_owned(),
+            on_delete,
+        });
+        self
+    }
+
+    fn all_references(&self) -> impl Iterator<Item = Reference> + '_ {
+        std::iter::once(Reference {
+            column: "owner".into(),
+            target: "users".into(),
+            on_delete: OnDelete::SetNull,
+        })
+        .chain(self.references.iter().cloned())
+    }
+
+    /// Instruction de création ; les clés étrangères y sont incluses si `inline_keys`.
+    fn create_statement(
+        &self,
+        table: &str,
+        created_as: &str,
+        inline_keys: bool,
+    ) -> TableCreateStatement {
+        let mut statement = Table::create();
+        statement
+            .table(Alias::new(created_as))
+            .col(big_pk_auto("id"));
+        for column in &self.columns {
+            statement.col(column.clone());
+        }
+        statement
+            .col(big_integer_null("owner"))
+            .col(timestamp_with_time_zone("created_at"))
+            .col(timestamp_with_time_zone("updated_at"));
+        if inline_keys {
+            for reference in self.all_references() {
+                statement.foreign_key(&mut foreign_key(table, &reference));
+            }
+        }
+        statement
+    }
+
+    /// Noms des colonnes, dans l'ordre de création.
+    fn column_names(&self) -> Vec<String> {
+        let mut names = vec!["id".to_owned()];
+        names.extend(self.columns.iter().map(ColumnDef::get_column_name));
+        names.extend(["owner", "created_at", "updated_at"].map(str::to_owned));
+        names
+    }
+}
+
+fn foreign_key(table: &str, reference: &Reference) -> ForeignKeyCreateStatement {
+    ForeignKey::create()
+        .name(format!("fk_{table}_{}", reference.column))
+        .from(Alias::new(table), Alias::new(&reference.column))
+        .to(Alias::new(&reference.target), Alias::new("id"))
+        .on_delete(reference.on_delete.into())
+        .to_owned()
+}
+
+fn unique_index(table: &str, column: &str) -> IndexCreateStatement {
+    Index::create()
+        .name(format!("uq_{table}_{column}"))
+        .table(Alias::new(table))
+        .col(Alias::new(column))
+        .unique()
+        .to_owned()
+}
+
+fn join_statement(
+    name: &str,
+    inline_keys: bool,
+    source: &str,
+    target: &str,
+) -> TableCreateStatement {
+    let mut statement = Table::create();
+    statement
+        .table(Alias::new(name))
+        .col(
+            ColumnDef::new(Alias::new(links::SOURCE))
+                .big_integer()
+                .not_null(),
+        )
+        .col(
+            ColumnDef::new(Alias::new(links::TARGET))
+                .big_integer()
+                .not_null(),
+        )
+        .primary_key(
+            Index::create()
+                .col(Alias::new(links::SOURCE))
+                .col(Alias::new(links::TARGET)),
+        );
+    if inline_keys {
+        for reference in join_references(source, target) {
+            statement.foreign_key(&mut foreign_key(name, &reference));
+        }
+    }
+    statement
+}
+
+fn join_references(source: &str, target: &str) -> [Reference; 2] {
+    [(links::SOURCE, source), (links::TARGET, target)].map(|(column, table)| Reference {
+        column: column.to_owned(),
+        target: table.to_owned(),
+        on_delete: OnDelete::Cascade,
+    })
+}
+
+#[derive(Debug, Clone)]
+enum Op {
+    CreateTable {
+        name: String,
+        def: TableDef,
+    },
+    CreateJoinTable {
+        name: String,
+        source: String,
+        target: String,
+    },
+    DropTable {
+        name: String,
+    },
+    AddColumn {
+        table: String,
+        column: ColumnDef,
+    },
+    DropColumn {
+        table: String,
+        column: String,
+    },
+    RenameColumn {
+        table: String,
+        from: String,
+        to: String,
+    },
+    AlterColumn {
+        table: String,
+        column: ColumnDef,
+    },
+    AddUnique {
+        table: String,
+        column: String,
+    },
+    DropUnique {
+        table: String,
+        column: String,
+    },
+    AddReference {
+        table: String,
+        reference: Reference,
+    },
+    DropReference {
+        table: String,
+        column: String,
+    },
+    Redefine {
+        name: String,
+        def: TableDef,
+    },
+}
+
+impl Op {
+    /// Table modifiée en place (hors création et suppression).
+    fn altered_table(&self) -> Option<&str> {
+        match self {
+            Self::AddColumn { table, .. }
+            | Self::DropColumn { table, .. }
+            | Self::RenameColumn { table, .. }
+            | Self::AlterColumn { table, .. }
+            | Self::AddUnique { table, .. }
+            | Self::DropUnique { table, .. }
+            | Self::AddReference { table, .. }
+            | Self::DropReference { table, .. } => Some(table),
+            _ => None,
+        }
+    }
+}
+
+/// Ensemble de changements de structure, appliqués dans un ordre sûr.
+#[derive(Debug, Clone, Default)]
 pub struct Plan {
-    tables: Vec<(String, TableCreateStatement)>,
-    foreign_keys: Vec<(String, ForeignKeyCreateStatement)>,
+    ops: Vec<Op>,
 }
 
 impl Plan {
@@ -51,48 +269,94 @@ impl Plan {
         Self::default()
     }
 
-    /// Table métier : `id`, puis les colonnes décrites par `columns`,
-    /// puis `owner`, `created_at` et `updated_at`.
+    /// Crée une table métier.
     #[must_use]
-    pub fn table(mut self, name: &str, columns: impl FnOnce(&mut TableCreateStatement)) -> Self {
-        let mut table = Table::create();
-        table.table(Alias::new(name)).col(big_pk_auto("id"));
-        columns(&mut table);
-        table
-            .col(big_integer_null("owner"))
-            .col(timestamp_with_time_zone("created_at"))
-            .col(timestamp_with_time_zone("updated_at"));
-        self.tables.push((name.to_owned(), table));
-        self.reference(name, "owner", "users", OnDelete::SetNull)
+    pub fn table(mut self, name: &str, define: impl FnOnce(&mut TableDef)) -> Self {
+        let mut def = TableDef::default();
+        define(&mut def);
+        self.ops.push(Op::CreateTable {
+            name: name.to_owned(),
+            def,
+        });
+        self
     }
 
-    /// Table de jointure d'une colonne `reference_list`.
+    /// Crée la table de jointure d'une colonne `reference_list`.
     #[must_use]
     pub fn join_table(mut self, name: &str, source: &str, target: &str) -> Self {
-        let mut table = Table::create();
-        table
-            .table(Alias::new(name))
-            .col(
-                ColumnDef::new(Alias::new(links::SOURCE))
-                    .big_integer()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new(Alias::new(links::TARGET))
-                    .big_integer()
-                    .not_null(),
-            )
-            .primary_key(
-                Index::create()
-                    .col(Alias::new(links::SOURCE))
-                    .col(Alias::new(links::TARGET)),
-            );
-        self.tables.push((name.to_owned(), table));
-        self.reference(name, links::SOURCE, source, OnDelete::Cascade)
-            .reference(name, links::TARGET, target, OnDelete::Cascade)
+        self.ops.push(Op::CreateJoinTable {
+            name: name.to_owned(),
+            source: source.to_owned(),
+            target: target.to_owned(),
+        });
+        self
     }
 
-    /// Clé étrangère `table.column → target.id`.
+    /// Supprime une table (métier ou de jointure) et ses données.
+    #[must_use]
+    pub fn drop_table(mut self, name: &str) -> Self {
+        self.ops.push(Op::DropTable {
+            name: name.to_owned(),
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn add_column(mut self, table: &str, column: impl IntoColumnDef) -> Self {
+        self.ops.push(Op::AddColumn {
+            table: table.to_owned(),
+            column: column.into_column_def(),
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn drop_column(mut self, table: &str, column: &str) -> Self {
+        self.ops.push(Op::DropColumn {
+            table: table.to_owned(),
+            column: column.to_owned(),
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn rename_column(mut self, table: &str, from: &str, to: &str) -> Self {
+        self.ops.push(Op::RenameColumn {
+            table: table.to_owned(),
+            from: from.to_owned(),
+            to: to.to_owned(),
+        });
+        self
+    }
+
+    /// Change le type ou l'obligation d'une colonne (`column` : nouvelle définition).
+    #[must_use]
+    pub fn alter_column(mut self, table: &str, column: impl IntoColumnDef) -> Self {
+        self.ops.push(Op::AlterColumn {
+            table: table.to_owned(),
+            column: column.into_column_def(),
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn unique(mut self, table: &str, column: &str) -> Self {
+        self.ops.push(Op::AddUnique {
+            table: table.to_owned(),
+            column: column.to_owned(),
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn drop_unique(mut self, table: &str, column: &str) -> Self {
+        self.ops.push(Op::DropUnique {
+            table: table.to_owned(),
+            column: column.to_owned(),
+        });
+        self
+    }
+
     #[must_use]
     pub fn reference(
         mut self,
@@ -101,52 +365,330 @@ impl Plan {
         target: &str,
         on_delete: OnDelete,
     ) -> Self {
-        let foreign_key = ForeignKey::create()
-            .name(format!("fk_{table}_{column}"))
-            .from(Alias::new(table), Alias::new(column))
-            .to(Alias::new(target), Alias::new("id"))
-            .on_delete(on_delete.into())
-            .to_owned();
-        self.foreign_keys.push((table.to_owned(), foreign_key));
+        self.ops.push(Op::AddReference {
+            table: table.to_owned(),
+            reference: Reference {
+                column: column.to_owned(),
+                target: target.to_owned(),
+                on_delete,
+            },
+        });
         self
     }
 
-    pub async fn create(self, manager: &SchemaManager<'_>) -> Result<(), DbErr> {
-        let Self {
-            mut tables,
-            foreign_keys,
-        } = self;
+    #[must_use]
+    pub fn drop_reference(mut self, table: &str, column: &str) -> Self {
+        self.ops.push(Op::DropReference {
+            table: table.to_owned(),
+            column: column.to_owned(),
+        });
+        self
+    }
+
+    /// Définition complète d'une table après les changements de ce plan.
+    ///
+    /// Utilisée uniquement par SQLite, qui reconstruit la table (voir le module).
+    #[must_use]
+    pub fn redefine(mut self, name: &str, define: impl FnOnce(&mut TableDef)) -> Self {
+        let mut def = TableDef::default();
+        define(&mut def);
+        self.ops.push(Op::Redefine {
+            name: name.to_owned(),
+            def,
+        });
+        self
+    }
+
+    pub async fn apply(self, manager: &SchemaManager<'_>) -> Result<(), DbErr> {
         if manager.get_database_backend() == DbBackend::Sqlite {
-            for (table, mut foreign_key) in foreign_keys {
-                if let Some((_, statement)) = tables.iter_mut().find(|(name, _)| *name == table) {
-                    statement.foreign_key(&mut foreign_key);
-                }
-            }
-            for (_, table) in tables {
-                manager.create_table(table).await?;
-            }
+            self.apply_sqlite(manager).await
         } else {
-            for (_, table) in tables {
-                manager.create_table(table).await?;
-            }
-            for (_, foreign_key) in foreign_keys {
-                manager.create_foreign_key(foreign_key).await?;
+            self.apply_server(manager).await
+        }
+    }
+
+    /// PostgreSQL et MySQL : opérations directes, suppressions d'abord.
+    async fn apply_server(self, manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+        remove_phase(manager, &self.ops).await?;
+        create_phase(manager, &self.ops).await
+    }
+
+    /// SQLite : créations et suppressions directes, tables modifiées reconstruites,
+    /// le tout dans une transaction, clés étrangères vérifiées à la fin.
+    async fn apply_sqlite(self, manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+        let redefined: BTreeMap<&str, &TableDef> = self
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Redefine { name, def } => Some((name.as_str(), def)),
+                _ => None,
+            })
+            .collect();
+        if let Some(table) = self
+            .ops
+            .iter()
+            .filter_map(Op::altered_table)
+            .find(|t| !redefined.contains_key(t))
+        {
+            return Err(DbErr::Migration(format!(
+                "la table `{table}` est modifiée sans `redefine` : SQLite ne peut pas l'altérer"
+            )));
+        }
+
+        let db = manager.get_connection();
+        db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
+        db.execute_unprepared("BEGIN").await?;
+        let result = self.sqlite_steps(manager, &redefined).await;
+        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        db.execute_unprepared(end).await?;
+        db.execute_unprepared("PRAGMA foreign_keys = ON").await?;
+        result
+    }
+
+    async fn sqlite_steps(
+        &self,
+        manager: &SchemaManager<'_>,
+        redefined: &BTreeMap<&str, &TableDef>,
+    ) -> Result<(), DbErr> {
+        let db = manager.get_connection();
+        for op in &self.ops {
+            match op {
+                Op::DropTable { name } => {
+                    manager
+                        .drop_table(Table::drop().table(Alias::new(name)).to_owned())
+                        .await?;
+                }
+                Op::CreateTable { name, def } => {
+                    manager
+                        .create_table(def.create_statement(name, name, true))
+                        .await?;
+                    for column in &def.unique {
+                        manager.create_index(unique_index(name, column)).await?;
+                    }
+                }
+                Op::CreateJoinTable {
+                    name,
+                    source,
+                    target,
+                } => {
+                    manager
+                        .create_table(join_statement(name, true, source, target))
+                        .await?;
+                }
+                _ => {}
             }
         }
-        Ok(())
+        for (name, def) in redefined {
+            let renames: BTreeMap<&str, &str> = self
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::RenameColumn { table, from, to } if table == name => {
+                        Some((to.as_str(), from.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            rebuild_sqlite_table(manager, name, def, &renames).await?;
+        }
+        let violations = db
+            .query_all_raw(sea_orm::Statement::from_string(
+                DbBackend::Sqlite,
+                "PRAGMA foreign_key_check",
+            ))
+            .await?;
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(DbErr::Migration(format!(
+                "{} ligne(s) référencent des enregistrements inexistants après migration",
+                violations.len()
+            )))
+        }
     }
 }
 
-/// Supprime des tables, dans l'ordre inverse de leur création.
-pub async fn drop_tables(manager: &SchemaManager<'_>, names: &[&str]) -> Result<(), DbErr> {
-    let cascade = manager.get_database_backend() == DbBackend::Postgres;
-    for name in names.iter().rev() {
-        let mut statement = Table::drop();
-        statement.table(Alias::new(*name)).if_exists();
-        if cascade {
-            statement.cascade();
+/// Suppressions (contraintes, tables, colonnes) et renommages.
+async fn remove_phase(manager: &SchemaManager<'_>, ops: &[Op]) -> Result<(), DbErr> {
+    let postgres = manager.get_database_backend() == DbBackend::Postgres;
+    for op in ops {
+        if let Op::DropReference { table, column } = op {
+            manager
+                .drop_foreign_key(
+                    ForeignKey::drop()
+                        .name(format!("fk_{table}_{column}"))
+                        .table(Alias::new(table))
+                        .to_owned(),
+                )
+                .await?;
         }
-        manager.drop_table(statement).await?;
+    }
+    for op in ops {
+        if let Op::DropUnique { table, column } = op {
+            manager
+                .drop_index(
+                    Index::drop()
+                        .name(format!("uq_{table}_{column}"))
+                        .table(Alias::new(table))
+                        .to_owned(),
+                )
+                .await?;
+        }
+    }
+    for op in ops {
+        if let Op::DropTable { name } = op {
+            let mut statement = Table::drop();
+            statement.table(Alias::new(name));
+            if postgres {
+                statement.cascade();
+            }
+            manager.drop_table(statement).await?;
+        }
+    }
+    for op in ops {
+        let alter = match op {
+            Op::DropColumn { table, column } => Table::alter()
+                .table(Alias::new(table))
+                .drop_column(Alias::new(column))
+                .to_owned(),
+            Op::RenameColumn { table, from, to } => Table::alter()
+                .table(Alias::new(table))
+                .rename_column(Alias::new(from), Alias::new(to))
+                .to_owned(),
+            _ => continue,
+        };
+        manager.alter_table(alter).await?;
+    }
+
+    Ok(())
+}
+
+/// Créations (tables, colonnes, modifications), puis index et clés étrangères.
+async fn create_phase(manager: &SchemaManager<'_>, ops: &[Op]) -> Result<(), DbErr> {
+    let mut foreign_keys = Vec::new();
+    let mut unique = Vec::new();
+    for op in ops {
+        match op {
+            Op::CreateTable { name, def } => {
+                manager
+                    .create_table(def.create_statement(name, name, false))
+                    .await?;
+                foreign_keys.extend(def.all_references().map(|r| foreign_key(name, &r)));
+                unique.extend(def.unique.iter().map(|c| unique_index(name, c)));
+            }
+            Op::CreateJoinTable {
+                name,
+                source,
+                target,
+            } => {
+                manager
+                    .create_table(join_statement(name, false, source, target))
+                    .await?;
+                foreign_keys.extend(
+                    join_references(source, target)
+                        .iter()
+                        .map(|r| foreign_key(name, r)),
+                );
+            }
+            _ => {}
+        }
+    }
+    for op in ops {
+        let alter = match op {
+            Op::AddColumn { table, column } => Table::alter()
+                .table(Alias::new(table))
+                .add_column(column.clone())
+                .to_owned(),
+            Op::AlterColumn { table, column } => Table::alter()
+                .table(Alias::new(table))
+                .modify_column(column.clone())
+                .to_owned(),
+            _ => continue,
+        };
+        manager.alter_table(alter).await?;
+    }
+    for op in ops {
+        match op {
+            Op::AddUnique { table, column } => unique.push(unique_index(table, column)),
+            Op::AddReference { table, reference } => {
+                foreign_keys.push(foreign_key(table, reference));
+            }
+            _ => {}
+        }
+    }
+    for index in unique {
+        manager.create_index(index).await?;
+    }
+    for key in foreign_keys {
+        manager.create_foreign_key(key).await?;
+    }
+    Ok(())
+}
+
+/// Reconstruit une table SQLite selon `def` en conservant ses données.
+/// `renames` associe un nouveau nom de colonne à l'ancien.
+async fn rebuild_sqlite_table(
+    manager: &SchemaManager<'_>,
+    name: &str,
+    def: &TableDef,
+    renames: &BTreeMap<&str, &str>,
+) -> Result<(), DbErr> {
+    let db = manager.get_connection();
+    let rows = db
+        .query_all_raw(sea_orm::Statement::from_string(
+            DbBackend::Sqlite,
+            format!("PRAGMA table_info(\"{name}\")"),
+        ))
+        .await?;
+    let existing = rows
+        .iter()
+        .map(|row| row.try_get::<String>("", "name"))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let temporary = format!("__forge_new_{name}");
+    manager
+        .create_table(def.create_statement(name, &temporary, true))
+        .await?;
+
+    // Colonnes recopiées : celles qui existaient (éventuellement sous un autre nom).
+    // Les nouvelles colonnes prennent leur valeur par défaut.
+    let (targets, sources): (Vec<_>, Vec<_>) = def
+        .column_names()
+        .into_iter()
+        .filter_map(|column| {
+            let source = renames
+                .get(column.as_str())
+                .map_or(column.clone(), |s| (*s).to_owned());
+            existing
+                .contains(&source)
+                .then(|| (Alias::new(column), Alias::new(source)))
+        })
+        .unzip();
+    let copy = Query::insert()
+        .into_table(Alias::new(&temporary))
+        .columns(targets)
+        .select_from(
+            Query::select()
+                .columns(sources)
+                .from(Alias::new(name))
+                .to_owned(),
+        )
+        .map_err(|err| DbErr::Migration(err.to_string()))?
+        .to_owned();
+    db.execute(&copy).await?;
+
+    manager
+        .drop_table(Table::drop().table(Alias::new(name)).to_owned())
+        .await?;
+    manager
+        .rename_table(
+            Table::rename()
+                .table(Alias::new(&temporary), Alias::new(name))
+                .to_owned(),
+        )
+        .await?;
+    for column in &def.unique {
+        manager.create_index(unique_index(name, column)).await?;
     }
     Ok(())
 }
@@ -187,7 +729,12 @@ impl MigrationTrait for SystemTables {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        drop_tables(manager, &["users", "parameters"]).await
+        for name in ["parameters", "users"] {
+            manager
+                .drop_table(Table::drop().table(Alias::new(name)).to_owned())
+                .await?;
+        }
+        Ok(())
     }
 }
 
@@ -197,11 +744,13 @@ mod tests {
     use sea_orm_migration::schema::string_null;
 
     #[test]
-    fn plan_adds_system_columns_and_owner() {
-        let plan = Plan::new().table("note", |t| {
-            t.col(string_null("titre"));
-        });
-        let sql = DbBackend::Postgres.build(&plan.tables[0].1).to_string();
+    fn table_definition_adds_system_columns() {
+        let mut def = TableDef::default();
+        def.col(string_null("titre"))
+            .reference("client", "client", OnDelete::Restrict);
+        let sql = DbBackend::Postgres
+            .build(&def.create_statement("note", "note", false))
+            .to_string();
         assert!(
             sql.starts_with(r#"CREATE TABLE "note" ( "id" bigint"#),
             "{sql}"
@@ -210,6 +759,10 @@ mod tests {
             sql.contains(r#""titre" varchar NULL, "owner" bigint NULL"#),
             "{sql}"
         );
-        assert_eq!(plan.foreign_keys.len(), 1);
+        assert_eq!(def.all_references().count(), 2);
+        assert_eq!(
+            def.column_names(),
+            ["id", "titre", "owner", "created_at", "updated_at"]
+        );
     }
 }

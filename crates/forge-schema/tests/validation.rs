@@ -668,3 +668,35 @@ fn required_reference_cycles() {
     );
     assert_issue(&schema, "tables[0]", "client → client");
 }
+
+#[test]
+fn renamed_from_must_designate_a_former_column() {
+    assert!(
+        issues(&with_column(
+            0,
+            json!({ "name": "raison", "type": "string", "renamed_from": "ancien" })
+        ))
+        .is_empty()
+    );
+    assert_issue(
+        &with_column(
+            0,
+            json!({ "name": "raison", "type": "string", "renamed_from": "nom" }),
+        ),
+        "tables[0].columns[2].renamed_from",
+        "encore une colonne",
+    );
+    let mut schema = with_column(
+        0,
+        json!({ "name": "a", "type": "string", "renamed_from": "ancien" }),
+    );
+    schema["tables"][0]["columns"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "name": "b", "type": "string", "renamed_from": "ancien" }));
+    assert_issue(
+        &schema,
+        "tables[0].columns[3].renamed_from",
+        "l'ancien nom d'une autre",
+    );
+}

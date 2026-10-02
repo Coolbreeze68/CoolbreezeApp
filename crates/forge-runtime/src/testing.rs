@@ -39,9 +39,10 @@ use crate::columns;
 pub async fn database<M: MigratorTrait>() -> DatabaseConnection {
     let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| "sqlite::memory:".into());
     let in_memory = url.starts_with("sqlite::memory:");
-    let mut options = ConnectOptions::new(url);
-    if in_memory {
-        // Chaque connexion SQLite en mémoire est une base distincte.
+    let mut options = ConnectOptions::new(url.clone());
+    if url.starts_with("sqlite:") {
+        // En mémoire, chaque connexion est une base distincte ; et les migrations
+        // SQLite exigent une connexion unique (voir `migration`).
         options.max_connections(1);
     }
     let db = Database::connect(options)

@@ -17,7 +17,7 @@ n'est jamais écrasé par une régénération.
 |---|---|---|
 | 0 | Workspace, `forge-schema`, parser de formules, JSON Schema, `forge validate` | ✅ |
 | 1 | Backend : entités, migration initiale, CRUD REST (pagination, tri, filtres), `parameters`, hooks, routes personnalisées ; SQLite, PostgreSQL, MySQL | ✅ |
-| 2 | Migrations incrémentales | à venir |
+| 2 | Migrations incrémentales : diff du schéma, renommages, protection des changements destructifs, retour arrière | ✅ |
 | 3 | Auth, rôles, moteur de règles | à venir |
 | 4 | Évaluation des formules, lookups, `persist`, agrégats | à venir |
 | 5 | GraphQL, import/export CSV, OpenAPI | à venir |
@@ -25,10 +25,9 @@ n'est jamais écrasé par une régénération.
 | 7 | Application Flutter | à venir |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Ce qui n'est **pas encore** disponible (phases suivantes) : modifier la structure
-d'un schéma déjà migré, l'authentification (`owner` reste vide), les règles
-d'autorisation, le calcul des formules et des lookups (absents des réponses), GraphQL,
-CSV, OpenAPI, l'application Flutter et Docker.
+Ce qui n'est **pas encore** disponible (phases suivantes) : l'authentification
+(`owner` reste vide), les règles d'autorisation, le calcul des formules et des
+lookups (absents des réponses), GraphQL, CSV, OpenAPI, l'application Flutter et Docker.
 
 ## Installation
 
@@ -46,7 +45,7 @@ pour en choisir d'autres).
 | Commande | Rôle |
 |---|---|
 | `forge new <dir> --schema <fichier>` | Crée un projet : copie le schéma dans `<dir>/forge.json` et génère le code. |
-| `forge generate [--dir .]` | Régénère le code à partir de `forge.json`. Idempotent : sans modification du schéma, aucun fichier ne change. |
+| `forge generate [--dir .] [--allow-destructive]` | Régénère le code à partir de `forge.json` et crée une migration si la structure de stockage a changé. Idempotent : sans modification du schéma, aucun fichier ne change. |
 | `forge migrate [up\|down\|status] [--dir .]` | Applique, annule ou liste les migrations (`cargo run -- migrate …` dans `backend/`). |
 | `forge validate [schema.json]` | Valide un schéma (défaut : `forge.json`) et liste **toutes** les erreurs avec leur chemin. |
 | `forge schema` | Affiche le JSON Schema du format d'entrée (contenu de `forge.schema.json`). |
@@ -178,14 +177,51 @@ suppression et contraintes de chaque table. Pour vos propres tests,
 `forge_runtime::testing::TestClient` envoie des requêtes à l'application sans
 réseau : voir [`examples/crm/backend/tests/hooks.rs`](examples/crm/backend/tests/hooks.rs).
 
-### 7. Régénérer
+### 7. Faire évoluer le schéma
 
-`forge generate` réécrit `src/generated/` et `tests/generated_crud.rs`, crée les
-fichiers de hooks des nouvelles tables, et ne touche jamais à `src/custom/`. Les
-changements sans effet sur le stockage (libellés, vues, règles…) sont appliqués
-immédiatement. Les changements de structure (nouvelle colonne…) nécessiteront les
-migrations incrémentales de la phase 2 : `forge generate` les refuse pour l'instant,
-avec un message explicite.
+Ajoutons une colonne `effectif` aux entreprises et renommons `ville` en `commune`
+dans `forge.json` :
+
+```json
+{ "name": "commune", "type": "string", "renamed_from": "ville" },
+{ "name": "effectif", "type": "integer", "default": 10 }
+```
+
+```text
+$ forge generate
+Migration m0002_entreprise :
+  - `entreprise` : `ville` renommée en `commune`
+  - `entreprise` : nouvelle colonne `effectif`
+Appliquez-la avec `forge migrate`.
+
+  créé       backend/src/migrations/m0002_entreprise.rs
+  mis à jour backend/src/generated/entities/entreprise.rs
+  …
+$ forge migrate          # ou au prochain démarrage du serveur
+```
+
+La colonne apparaît dans l'entité et l'API, les données sont conservées (`commune`
+reprend les valeurs de `ville`, les lignes existantes reçoivent `effectif = 10`), et
+`src/custom/` n'est pas touché. `forge migrate down` annule la dernière migration.
+
+Ce que fait `forge generate` :
+
+- il compare la structure de stockage du schéma à celle de la dernière migration
+  (`.forge/snapshot.json`) ; les changements sans effet sur le stockage (libellés,
+  vues, règles…) ne créent pas de migration ;
+- la migration créée (`src/migrations/mNNNN_<tables>.rs`) n'est plus jamais réécrite :
+  vous pouvez la compléter (reprise de données, index) avant de l'appliquer ;
+- un changement qui **perd des données** (suppression de table ou de colonne,
+  changement de type) est refusé, avec la liste des pertes, sauf avec
+  `--allow-destructive` ; la migration porte alors un avertissement en en-tête ;
+- un changement qui **peut échouer** selon les données (colonne devenue obligatoire
+  ou unique, nouvelle référence sur une colonne existante, colonne obligatoire sans
+  valeur par défaut) est signalé, et noté dans la migration ;
+- sans `renamed_from`, un renommage est vu comme une suppression suivie d'un ajout,
+  donc refusé comme destructif. Le renommage d'une table n'est pas pris en charge.
+
+Les valeurs par défaut du schéma deviennent aussi celles de la base : elles
+remplissent les lignes existantes quand une colonne est ajoutée.
 
 ## API REST générée
 
@@ -228,6 +264,7 @@ référence facultative est remise à `null`, les liens `reference_list` sont su
 | Usage conseillé | développement, tests | production | production |
 | `decimal` | flottant (~15 chiffres significatifs) | `decimal(19,4)` exact | `decimal(19,4)` exact |
 | `datetime` | texte | `timestamptz` | `timestamp` (1970–2038, à la seconde) |
+| Migrations | reconstruction des tables modifiées (données recopiées), en transaction | en transaction | sans transaction : une migration interrompue reste partielle |
 
 ## Format d'entrée
 
@@ -296,7 +333,7 @@ pourrait être créé.
 | `default` | Valeur par défaut, du type de la colonne | Pas sur une relation ni une colonne calculée |
 | `formula` | Colonne calculée | Types simples uniquement |
 | `persist` | Avec `formula` : valeur stockée en base, recalculée quand une dépendance change | Pas de fonction volatile (`TODAY`) |
-| `renamed_from` | Ancien nom, pour une migration par renommage | |
+| `renamed_from` | Ancien nom : la migration renomme la colonne au lieu de la supprimer et de la recréer | Pas le nom d'une colonne existante ; peut rester en place après la migration |
 
 ### Formules
 
@@ -335,11 +372,12 @@ de la table, des comparaisons et `AND`/`OR`/`NOT`, sans fonctions.
 crates/
 ├── forge-schema/   format d'entrée : types serde, validation, modèle résolu, valeurs typées, JSON Schema
 ├── forge-formula/  langage de formules : lexer, parser, AST, registre de fonctions
-├── forge-codegen/  génération : structure de stockage, templates, écriture idempotente
-├── forge-runtime/  logique des apps générées : CRUD générique, filtres, hooks, migrations, CLI
+├── forge-codegen/  génération : structure de stockage, diff et migrations, templates, écriture idempotente
+├── forge-runtime/  logique des apps générées : CRUD générique, filtres, hooks, exécution des migrations, CLI
 └── forge-cli/      binaire `forge`
 templates/backend/  templates minijinja, embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)
+scripts/            scénario de bout en bout (évolution du schéma)
 ```
 
 Le backend généré embarque son schéma (`src/generated/forge.json`) : `forge-runtime`
@@ -356,4 +394,6 @@ cargo test --all-features                              # inclut le CRUD du CRM s
 TEST_DATABASE_URL=postgres://… cargo test -p mini_crm  # idem sur PostgreSQL ou MySQL
 cargo run -p forge-cli -- schema > forge.schema.json   # après modification de spec.rs
 cargo run -p forge-cli -- generate --dir examples/crm  # après modification des templates ou du codegen
+./scripts/e2e-evolution.sh                             # scénario complet : création, données, évolution, migration
+DATABASE_URL=postgres://…/vide ./scripts/e2e-evolution.sh   # idem sur une base PostgreSQL ou MySQL vide
 ```

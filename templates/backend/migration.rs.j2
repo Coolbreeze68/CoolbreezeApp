@@ -1,0 +1,61 @@
+//! Migration `{{ name }}`, générée par forge :
+//!
+{%- for line in summary %}
+//! - {{ line }}
+{%- endfor %}
+{%- if data_loss %}
+//!
+//! ATTENTION, migration destructive (générée avec `--allow-destructive`) :
+{%- for line in data_loss %}
+//! - {{ line }}
+{%- endfor %}
+{%- endif %}
+{%- if may_fail %}
+//!
+//! Peut échouer selon les données existantes :
+{%- for line in may_fail %}
+//! - {{ line }}
+{%- endfor %}
+{%- endif %}
+//!
+//! Créée une seule fois : vous pouvez la compléter (données, index…), mais ne la
+//! modifiez plus une fois appliquée.
+{%- if redefines %}
+//!
+//! Les appels `redefine` décrivent les tables modifiées dans leur état final ;
+//! seul SQLite s'en sert, pour reconstruire ces tables en conservant les données.
+{%- endif %}
+
+{% if uses_on_delete %}use forge_runtime::migration::{OnDelete, Plan};
+{% else %}use forge_runtime::migration::Plan;
+{% endif %}use sea_orm_migration::prelude::*;
+{% if uses_schema %}use sea_orm_migration::schema::*;
+{% endif %}
+pub struct Migration;
+
+impl MigrationName for Migration {
+    fn name(&self) -> &str {
+        "{{ name }}"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        Plan::new()
+{%- for op in up %}
+            {{ op }}
+{%- endfor %}
+            .apply(manager)
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        Plan::new()
+{%- for op in down %}
+            {{ op }}
+{%- endfor %}
+            .apply(manager)
+            .await
+    }
+}

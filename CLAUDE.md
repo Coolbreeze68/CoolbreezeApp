@@ -13,6 +13,8 @@ cargo run -p forge-cli -- validate examples/crm/forge.json
 cargo run -p forge-cli -- schema > forge.schema.json    # obligatoire après modification de spec.rs
 cargo run -p forge-cli -- generate --dir examples/crm   # obligatoire après modification des templates/codegen
 TEST_DATABASE_URL=postgres://… cargo test -p mini_crm    # CRUD du CRM sur PostgreSQL ou MySQL
+TEST_DATABASE_URL=postgres://… cargo test -p forge-runtime --test migration  # migrations avec données
+./scripts/e2e-evolution.sh                              # scénario complet (DATABASE_URL : base vide)
 ```
 
 Tests de cohérence : `json_schema_file_is_up_to_date` échoue si `forge.schema.json`
@@ -38,8 +40,8 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 |---|---|
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`. `FunctionRegistry` liste les signatures (arité, agrégat, volatile). Aucune connaissance du schéma. |
 | `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
-| `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
-| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `resource` : CRUD générique sur `ForgeEntity`. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan` + migrations système. `cli` : binaire généré. `testing` (feature) : base de test, `TestClient`, `check_resources`. |
+| `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
+| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `resource` : CRUD générique sur `ForgeEntity`. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : base de test, `TestClient`, `check_resources`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 
 Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
@@ -70,8 +72,26 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - `decimal(19,4)`, `varchar(255)` (longueur vérifiée par `payload`), `bigint` pour les
   entiers, durées et identifiants.
 - Suppression : référence obligatoire → `RESTRICT`, facultative → `SET NULL`,
-  jointure → `CASCADE`. SQLite reçoit ses clés étrangères dans le `CREATE TABLE`,
-  les autres bases après création de toutes les tables (`migration::Plan`).
+  jointure → `CASCADE`.
+- Contraintes nommées d'après la colonne : `fk_<table>_<colonne>`, index unique
+  `uq_<table>_<colonne>` (jamais d'unicité en ligne : il faut pouvoir la supprimer).
+  Renommer une telle colonne supprime puis recrée la contrainte sous le nouveau nom.
+
+### Migrations
+
+- Chaque migration générée est un `Plan` d'opérations explicites et figées (jamais
+  recalculées par le runtime) : la migration initiale est le diff depuis un layout
+  vide, la descente le diff inverse. `Plan::apply` ordonne les opérations lui-même.
+- PostgreSQL / MySQL : opérations directes (suppressions, renommages, créations,
+  ajouts et modifications, puis index uniques et clés étrangères).
+- SQLite : créations/suppressions directes ; chaque table modifiée est reconstruite
+  depuis sa définition complète (`redefine`, émis par le générateur pour toute table
+  modifiée), clés étrangères désactivées, dans une transaction, puis
+  `PRAGMA foreign_key_check`. Exige une connexion unique : `cli::connect(.., true)`
+  et `testing::database` limitent le pool à 1 pour SQLite.
+- Les valeurs par défaut du schéma sont posées en base (`.default(...)`) pour remplir
+  les lignes existantes ; le runtime continue d'appliquer celles du schéma à la création.
+- Nom : `mNNNN_<tables concernées>` (`m0001_init` pour la première).
 - Erreurs : `Error` → JSON `{ error: { code, message, fields? } }` ; les erreurs
   internes sont journalisées, pas exposées.
 
@@ -98,10 +118,12 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Conditions `when` : uniquement colonnes stockées de la table, `$user.id|email`,
   `$param.*`, littéraux et opérateurs, sans fonctions, pour rester traduisibles en SQL.
 - Le schéma du CRM est `examples/crm/forge.json` (le projet de référence est versionné).
-- Phase 1 : `owner` reste `NULL` (auth en phase 3) ; formules non persistées et lookups
-  absents des réponses, formules persistées à `NULL` (phase 4) ; tout changement de
-  structure de stockage est refusé par `forge generate` (`Error::StorageChanged`,
-  levé en phase 2).
+- `owner` reste `NULL` jusqu'à l'auth (phase 3) ; formules non persistées et lookups
+  absents des réponses, formules persistées à `NULL` (phase 4).
+- Migrations : `DataLoss` refusé sans `--allow-destructive` (`Error::Destructive`, rien
+  n'est écrit) ; `MayFail` signalé (avertissement + en-tête de migration). Renommage de
+  table non géré (suppression + création). MySQL n'exécute pas les migrations en
+  transaction (DDL non transactionnel).
 - SQLite stocke les `decimal` en flottant (limite de sea-orm/sqlx) : réservé au
   développement et aux tests.
 - Hors périmètre v1 : temps réel, multi-tenant, workflows, upload de fichiers.

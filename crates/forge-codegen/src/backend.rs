@@ -138,84 +138,6 @@ impl Backend<'_> {
     }
 }
 
-#[derive(Serialize)]
-struct MigrationTable {
-    name: String,
-    columns: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct MigrationReference<'a> {
-    table: &'a str,
-    column: &'a str,
-    target: &'a str,
-    on_delete: &'static str,
-}
-
-/// Migration créant toutes les tables de `layout`.
-pub(crate) fn initial_migration(
-    renderer: &Renderer,
-    name: &str,
-    layout: &Layout,
-) -> Result<OutputFile, Error> {
-    let tables: Vec<MigrationTable> = layout
-        .tables
-        .iter()
-        .map(|t| MigrationTable {
-            name: t.name.clone(),
-            columns: t.columns.iter().map(column_definition).collect(),
-        })
-        .collect();
-    let references: Vec<MigrationReference> = layout
-        .tables
-        .iter()
-        .flat_map(|t| {
-            t.columns.iter().filter_map(|c| {
-                Some(MigrationReference {
-                    table: &t.name,
-                    column: &c.name,
-                    target: c.references.as_deref()?,
-                    on_delete: if c.nullable { "SetNull" } else { "Restrict" },
-                })
-            })
-        })
-        .collect();
-    let drop_order: Vec<&str> = layout
-        .tables
-        .iter()
-        .map(|t| t.name.as_str())
-        .chain(layout.join_tables.iter().map(|j| j.name.as_str()))
-        .collect();
-    let context = serde_json::json!({
-        "name": name,
-        "tables": tables,
-        "references": references,
-        "join_tables": layout.join_tables,
-        "drop_order": drop_order,
-    });
-    Ok(OutputFile {
-        path: PathBuf::from(format!("backend/src/migrations/{name}.rs")),
-        content: renderer.render("backend/migration_init.rs", &context)?,
-        policy: Policy::Once,
-    })
-}
-
-/// Définition sea-orm-migration d'une colonne, par exemple `decimal_len_null("montant", 19, 4)`.
-fn column_definition(column: &ColumnLayout) -> String {
-    let (function, extra) = match column.storage {
-        Storage::String => ("string", ""),
-        Storage::Text => ("text", ""),
-        Storage::BigInteger => ("big_integer", ""),
-        Storage::Decimal => ("decimal_len", ", 19, 4"),
-        Storage::Boolean => ("boolean", ""),
-        Storage::Date => ("date", ""),
-        Storage::Timestamp => ("timestamp_with_time_zone", ""),
-    };
-    let null = if column.nullable { "_null" } else { "" };
-    let unique = if column.unique { ".unique_key()" } else { "" };
-    format!("{function}{null}(\"{}\"{extra}){unique}", column.name)
-}
-
 /// `date_cloture` → `DateCloture`.
 pub(crate) fn pascal_case(name: &str) -> String {
     name.split('_')
@@ -237,28 +159,5 @@ mod tests {
         assert_eq!(pascal_case("date_cloture"), "DateCloture");
         assert_eq!(pascal_case("tag"), "Tag");
         assert_eq!(pascal_case("x2_y"), "X2Y");
-    }
-
-    #[test]
-    fn column_definitions() {
-        let column = ColumnLayout {
-            name: "montant".into(),
-            storage: Storage::Decimal,
-            nullable: true,
-            unique: false,
-            references: None,
-        };
-        assert_eq!(
-            column_definition(&column),
-            r#"decimal_len_null("montant", 19, 4)"#
-        );
-        let column = ColumnLayout {
-            name: "nom".into(),
-            storage: Storage::String,
-            nullable: false,
-            unique: true,
-            references: None,
-        };
-        assert_eq!(column_definition(&column), r#"string("nom").unique_key()"#);
     }
 }

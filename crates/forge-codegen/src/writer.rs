@@ -25,6 +25,8 @@ pub struct OutputFile {
 /// Bilan d'une génération (chemins relatifs au projet).
 #[derive(Debug, Default)]
 pub struct Report {
+    /// Migration créée : nom et changements.
+    pub migration: Option<(String, Vec<crate::Change>)>,
     pub created: Vec<PathBuf>,
     pub updated: Vec<PathBuf>,
     pub deleted: Vec<PathBuf>,
