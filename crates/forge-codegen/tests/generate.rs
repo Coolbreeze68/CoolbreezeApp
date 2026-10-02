@@ -12,6 +12,7 @@ const CRM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/crm");
 fn options() -> Options {
     Options {
         runtime_path: "../../../crates/forge-runtime".into(),
+        flutter_path: "../../../packages/forge_flutter".into(),
         allow_destructive: false,
     }
 }
@@ -43,7 +44,7 @@ fn copy_project(from: &Path, to: &Path) {
     for entry in fs::read_dir(from).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap();
-        if name == "target" {
+        if name == "target" || name == ".dart_tool" || name == "build" {
             continue;
         }
         let dest = to.join(name);

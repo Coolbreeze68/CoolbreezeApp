@@ -1,0 +1,40 @@
+// NE PAS MODIFIER : code généré par forge depuis `forge.json`.
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:forge_flutter/forge_flutter.dart';
+import 'package:forge_flutter/testing.dart';
+import 'package:{{ package_name }}/generated/app.dart';
+import 'package:{{ package_name }}/generated/models.dart';
+
+/// Colonnes modifiables de `table`, avec leur valeur dans `json`.
+Map<String, dynamic> writable(String table, Map<String, dynamic> json) => {
+  for (final column in schema.table(table)!.columns)
+    if (column.writable) column.name: json[column.name],
+};
+
+void main() {
+  testWidgets('chaque table : liste et formulaire de création', (tester) async {
+    final api = FakeApi();
+    for (final table in schema.tables) {
+      api.records(table.name, const []);
+    }
+    await tester.pumpWidget(buildApp(client: api.client()));
+    await tester.pumpAndSettle();
+    final router = GoRouter.of(tester.element(find.byType(Navigator).first));
+    for (final table in schema.tables) {
+      router.go(Paths.table(table.name));
+      await tester.pumpAndSettle();
+      router.go(Paths.create(table.name));
+      await tester.pumpAndSettle();
+    }
+  });
+{% for table in tables %}
+  test('modèle {{ table.class_name }} : lecture et écriture', () {
+{{ table.sample }}    expect(
+      {{ table.class_name }}.fromJson(json).toJson(),
+      writable('{{ table.name }}', json),
+    );
+  });
+{%- endfor %}
+}

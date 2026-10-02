@@ -74,6 +74,46 @@ const TEMPLATES: &[(&str, &str)] = &[
         "backend/migrations_mod.rs",
         include_str!("../../../templates/backend/migrations_mod.rs.j2"),
     ),
+    (
+        "flutter/analysis_options.yaml",
+        include_str!("../../../templates/flutter/analysis_options.yaml.j2"),
+    ),
+    (
+        "flutter/app.dart",
+        include_str!("../../../templates/flutter/app.dart.j2"),
+    ),
+    (
+        "flutter/customization.dart",
+        include_str!("../../../templates/flutter/customization.dart.j2"),
+    ),
+    (
+        "flutter/generated_test.dart",
+        include_str!("../../../templates/flutter/generated_test.dart.j2"),
+    ),
+    (
+        "flutter/gitignore",
+        include_str!("../../../templates/flutter/gitignore.j2"),
+    ),
+    (
+        "flutter/index.html",
+        include_str!("../../../templates/flutter/index.html.j2"),
+    ),
+    (
+        "flutter/main.dart",
+        include_str!("../../../templates/flutter/main.dart.j2"),
+    ),
+    (
+        "flutter/manifest.json",
+        include_str!("../../../templates/flutter/manifest.json.j2"),
+    ),
+    (
+        "flutter/pubspec.yaml",
+        include_str!("../../../templates/flutter/pubspec.yaml.j2"),
+    ),
+    (
+        "flutter/theme.dart",
+        include_str!("../../../templates/flutter/theme.dart.j2"),
+    ),
 ];
 
 pub(crate) struct Renderer {

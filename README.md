@@ -22,11 +22,11 @@ n'est jamais écrasé par une régénération.
 | 4 | Évaluation des formules, lookups, `persist`, fonctions personnalisées, endpoint d'agrégats | ✅ |
 | 5 | GraphQL (schéma dynamique, parité avec REST, résolveurs personnalisés), import/export CSV, OpenAPI + Swagger UI | ✅ |
 | 6 | Observabilité (journaux JSON, identifiant de requête, `/metrics`, `/health`), cache des lectures (mémoire ou Redis) invalidé à l'écriture | ✅ |
-| 7 | Application Flutter | à venir |
+| 7 | Application Flutter (web et mobile) : listes, fiches, formulaires, calendrier, statistiques, CSV, comptes ; modèles Dart typés | ✅ |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Ce qui n'est **pas encore** disponible (phases suivantes) : l'application Flutter
-et Docker.
+Ce qui n'est **pas encore** disponible (phase suivante) : Docker et les GitHub
+Actions de l'application générée.
 
 ## Installation
 
@@ -35,9 +35,11 @@ cargo install --path crates/forge-cli
 forge --help
 ```
 
-Les projets générés dépendent de `forge-runtime` par chemin : le binaire `forge`
-pointe vers les sources à partir desquelles il a été compilé (option `--runtime-path`
-pour en choisir d'autres).
+Les projets générés dépendent de `forge-runtime` et de `forge_flutter` par chemin :
+le binaire `forge` pointe vers les sources à partir desquelles il a été compilé
+(options `--runtime-path` et `--flutter-path` pour en choisir d'autres).
+L'application Flutter demande [Flutter](https://docs.flutter.dev/get-started/install)
+3.38 ou plus récent (Dart 3.10).
 
 ## Commandes
 
@@ -74,6 +76,18 @@ forge new crm --schema examples/crm/forge.json
 crm/
 ├── forge.json                 # votre schéma : la source de vérité
 ├── .forge/snapshot.json       # structure de stockage à la dernière migration
+├── app/                       # application Flutter (web, Android, iOS)
+│   ├── pubspec.yaml           # à vous (créé une fois)
+│   ├── lib/main.dart          # à vous (créé une fois)
+│   ├── lib/generated/         # NE PAS MODIFIER : réécrit à chaque génération
+│   │   ├── schema.dart        #   description des tables, lue par l'interface
+│   │   ├── models.dart        #   modèles typés et énumérations, pour votre code
+│   │   └── app.dart           #   assemblage : buildApp()
+│   ├── lib/custom/            # votre code, jamais modifié par forge
+│   │   ├── customization.dart #   points d'extension de l'interface
+│   │   └── theme.dart         #   thèmes clair et sombre
+│   ├── web/                   # page d'accueil web (créée une fois)
+│   └── test/generated_test.dart  # chaque écran s'ouvre, modèles lus et écrits (réécrit)
 └── backend/
     ├── Cargo.toml             # à vous (créé une fois)
     ├── src/main.rs, lib.rs    # à vous (créés une fois)
@@ -122,6 +136,7 @@ le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
 | `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD` | — | Compte administrateur initial |
 | `FORGE_CACHE_TTL` | `60` | Durée de vie des lectures en cache, en secondes ; `0` désactive le cache |
 | `FORGE_CACHE_URL` | — | Cache Redis partagé (`redis://hôte:6379`), feature `redis` ; sinon cache en mémoire |
+| `FORGE_CORS_ORIGINS` | — | Origines autorisées à appeler l'API depuis un navigateur (virgules ; `*` pour toutes) |
 | `RUST_LOG` | `info,sqlx=warn` | Niveau des journaux |
 | `FORGE_LOG_FORMAT` | `text` (debug), `json` (release) | Format des journaux |
 
@@ -289,7 +304,102 @@ métriques, cache) ; `TestClient` offre aussi `graphql(requête, variables)`,
 `request_text` (corps CSV) et `request_headers`. Avec la feature `redis` de
 `forge-runtime` et `TEST_CACHE_URL=redis://…`, les tests utilisent un cache Redis.
 
-### 8. Faire évoluer le schéma
+### 8. Lancer l'application Flutter
+
+```bash
+cd crm/backend && FORGE_CORS_ORIGINS=http://localhost:5000 cargo run   # API, ouverte à l'app web
+cd crm/app
+flutter run -d chrome --web-port 5000 --dart-define=FORGE_API_URL=http://localhost:8080
+```
+
+Une seule application, pilotée par `lib/generated/schema.dart`, sert le web et
+le mobile (menu fixe et tableaux sur grand écran, tiroir et tuiles sur téléphone) :
+
+- **connexion**, session renouvelée automatiquement (jeton de rafraîchissement
+  conservé dans le stockage chiffré du système) ; langue au choix parmi `locales` ;
+- **listes** paginées : recherche, tri par colonne, filtres par type (valeurs
+  d'énumération, intervalles de nombres et de dates, référence, texte contenu) ;
+- **fiches** : valeurs mises en forme, références cliquables, formules et lookups,
+  et les enregistrements des autres tables qui la référencent (« Tout voir »,
+  création pré-remplie) ;
+- **formulaires** de création et de modification : un champ par type (dates,
+  durées `h:mm`, énumérations, références avec recherche, listes de références),
+  valeurs par défaut, erreurs de validation du serveur sous chaque champ ; seules
+  les colonnes modifiées sont envoyées ;
+- **calendrier** (`views.calendar`) : mois et agenda du jour, création à une date ;
+- **statistiques** (`views.stats`) : totaux, moyennes, extrêmes et barres par groupe,
+  sur les enregistrements filtrés ;
+- **export et import CSV** de la liste filtrée ;
+- pour les administrateurs : **paramètres** et **comptes** (rôles, activation) ;
+  pour tous : changement de mot de passe.
+
+Les boutons suivent les règles (`rules`) : une action qu'aucun rôle de
+l'utilisateur ne permet n'est pas proposée ; une condition `when` est vérifiée par
+le serveur. Les colonnes `hidden` n'apparaissent pas dans l'interface.
+
+| Fiche | Statistiques |
+|---|---|
+| ![Fiche entreprise](docs/images/fiche.png) | ![Statistiques des opportunités](docs/images/statistiques.png) |
+| **Calendrier** | **Téléphone** |
+| ![Calendrier des opportunités](docs/images/calendrier.png) | ![Liste sur téléphone](docs/images/mobile.png) |
+
+L'adresse de l'API vient de `--dart-define=FORGE_API_URL=…` ; sans elle, l'app web
+appelle l'origine qui la sert (API et app derrière le même domaine, sans CORS).
+`FORGE_CORS_ORIGINS` (origines séparées par des virgules, ou `*`) autorise un
+navigateur à appeler l'API depuis une autre origine. Pour Android et iOS, ajoutez
+une fois les dossiers de plateforme avec `flutter create --platforms=android,ios .`
+dans `app/` (ils vous appartiennent ensuite).
+
+#### Personnaliser l'interface
+
+`lib/custom/customization.dart` n'est jamais réécrit. `ForgeCustomization` y
+déclare les points d'extension ([exemple du CRM](examples/crm/app/lib/custom/customization.dart)) :
+
+```dart
+final customization = ForgeCustomization(
+  theme: lightTheme,
+  darkTheme: darkTheme,
+  tableIcons: const {'entreprise': Icons.business},
+  enumLabels: const {
+    'opportunite.etape': {'gagne': Label({'fr': 'Gagnée', 'en': 'Won'})},
+  },
+  // Champ de formulaire ou affichage d'une colonne remplacés (vos widgets).
+  fields: {'tag.couleur': (context, field) => ColorField(field)},
+  cells: {'tag.couleur': (context, record, value) => ColorDot(value)},
+  // Blocs ajoutés à une fiche, pages ajoutées au menu.
+  detailSections: {'entreprise': [(context, record) => EntrepriseSummary(id: record['id'])]},
+  pages: [CustomPage(path: 'accueil', label: Label.plain('Accueil'), icon: Icons.home, builder: …)],
+  // Textes de l'interface dans une autre langue que fr et en.
+  strings: {'de': ForgeStrings(…)},
+);
+```
+
+`Forge.of(context)` donne accès, dans tout widget, au client de l'API, au schéma,
+à l'utilisateur connecté et à la mise en forme des valeurs ; `context.go(Paths.record('contact', 3))`
+navigue. Les modèles typés de `lib/generated/models.dart` simplifient l'accès à
+l'API depuis votre code :
+
+```dart
+final gagnees = await Opportunite.api(client).list(
+  const ListQuery(filters: [Filter.equals('etape', 'gagne')]),
+);
+final total = gagnees.items.fold(Decimal.zero, (sum, o) => sum + o.montant);
+```
+
+#### Tester l'application
+
+```bash
+cd crm/app && flutter test
+```
+
+`test/generated_test.dart` ouvre la liste et le formulaire de chaque table, et
+vérifie que chaque modèle relit et réécrit un enregistrement. Pour vos tests,
+`package:forge_flutter/testing.dart` fournit `FakeApi`, une API en mémoire
+(routes déclarées par le test, compte connecté). Le CRM contient aussi un parcours
+contre un backend réel, [`test/api_test.dart`](examples/crm/app/test/api_test.dart),
+lancé avec `FORGE_E2E_URL=http://localhost:8080 flutter test test/api_test.dart`.
+
+### 9. Faire évoluer le schéma
 
 Ajoutons une colonne `effectif` aux entreprises et renommons `ville` en `commune`
 dans `forge.json` :
@@ -701,7 +811,10 @@ crates/
 ├── forge-runtime/  logique des apps générées : CRUD générique (REST, GraphQL, CSV), OpenAPI, filtres,
 │                   agrégats, calcul des formules, auth, hooks, cache, observabilité, migrations, CLI
 └── forge-cli/      binaire `forge`
-templates/backend/  templates minijinja, embarqués dans le binaire
+packages/
+└── forge_flutter/  logique de l'app Flutter : client de l'API (session, erreurs), listes, fiches,
+                    formulaires, filtres, calendrier, statistiques, CSV, comptes, personnalisation
+templates/          templates minijinja (backend/, flutter/), embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)
 scripts/            scénario de bout en bout (évolution du schéma)
 ```
@@ -712,6 +825,11 @@ corps, filtres, valeurs par défaut, liens N↔N, paramètres, formules, schéma
 document OpenAPI). Le code généré se limite aux entités sea-orm typées, à la
 migration et au branchement des hooks.
 
+De même, l'application Flutter générée contient la description des tables en Dart
+(`lib/generated/schema.dart`) et les modèles typés ; tous les écrans vivent dans
+`forge_flutter`, qui se met à jour sans régénération. Le code Dart généré est déjà
+formaté comme le produirait `dart format`.
+
 ## Développement
 
 ```bash
@@ -721,6 +839,8 @@ cargo test --all-features                              # inclut le CRUD du CRM s
 TEST_DATABASE_URL=postgres://… cargo test -p mini_crm  # idem sur PostgreSQL ou MySQL
 cargo run -p forge-cli -- schema > forge.schema.json   # après modification de spec.rs
 cargo run -p forge-cli -- generate --dir examples/crm  # après modification des templates ou du codegen
+(cd packages/forge_flutter && flutter analyze && flutter test)
+(cd examples/crm/app && flutter analyze && flutter test)  # app générée du CRM
 ./scripts/e2e-evolution.sh                             # scénario complet : création, données, évolution, migration
 DATABASE_URL=postgres://…/vide ./scripts/e2e-evolution.sh   # idem sur une base PostgreSQL ou MySQL vide
 ```

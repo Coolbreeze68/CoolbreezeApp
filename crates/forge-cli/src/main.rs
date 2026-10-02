@@ -4,12 +4,27 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command as Process, ExitCode};
 
 use anyhow::{Context, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use forge_codegen::Options;
 use forge_schema::{Model, SchemaError};
 
 /// Emplacement de `forge-runtime` dans les sources de forge, utilisé par défaut.
 const RUNTIME_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../forge-runtime");
+
+/// Emplacement de `forge_flutter` dans les sources de forge, utilisé par défaut.
+const FLUTTER_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/forge_flutter");
+
+/// Bibliothèques dont dépendent les projets générés (utilisées à la création
+/// de `backend/Cargo.toml` et `app/pubspec.yaml`).
+#[derive(Debug, Args)]
+struct Libraries {
+    /// Chemin de la crate `forge-runtime` (par défaut : celle des sources de forge).
+    #[arg(long)]
+    runtime_path: Option<PathBuf>,
+    /// Chemin du package `forge_flutter` (par défaut : celui des sources de forge).
+    #[arg(long)]
+    flutter_path: Option<PathBuf>,
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "forge", version, about)]
@@ -27,18 +42,16 @@ enum Command {
         /// Schéma de départ, copié dans `<dir>/forge.json`.
         #[arg(long)]
         schema: PathBuf,
-        /// Chemin de la crate `forge-runtime` (par défaut : celle des sources de forge).
-        #[arg(long)]
-        runtime_path: Option<PathBuf>,
+        #[command(flatten)]
+        libraries: Libraries,
     },
     /// Régénère le code d'un projet à partir de son `forge.json`.
     Generate {
         /// Dossier du projet.
         #[arg(long, default_value = ".")]
         dir: PathBuf,
-        /// Chemin de la crate `forge-runtime` (utilisé à la création de `backend/Cargo.toml`).
-        #[arg(long)]
-        runtime_path: Option<PathBuf>,
+        #[command(flatten)]
+        libraries: Libraries,
         /// Génère la migration même si elle supprime ou convertit des données.
         #[arg(long)]
         allow_destructive: bool,
@@ -86,13 +99,13 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::New {
             dir,
             schema,
-            runtime_path,
-        } => new(&dir, &schema, runtime_path.as_deref()),
+            libraries,
+        } => new(&dir, &schema, &libraries),
         Command::Generate {
             dir,
-            runtime_path,
+            libraries,
             allow_destructive,
-        } => generate(&dir, runtime_path.as_deref(), allow_destructive),
+        } => generate(&dir, &libraries, allow_destructive),
         Command::Migrate { action, dir } => migrate(&dir, action),
         Command::Validate { schema } => validate(&schema),
         Command::Schema => {
@@ -134,7 +147,7 @@ fn validate(path: &Path) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn new(dir: &Path, schema: &Path, runtime_path: Option<&Path>) -> anyhow::Result<ExitCode> {
+fn new(dir: &Path, schema: &Path, libraries: &Libraries) -> anyhow::Result<ExitCode> {
     if dir.exists() && dir.read_dir()?.next().is_some() {
         bail!("`{}` existe et n'est pas vide", dir.display());
     }
@@ -144,10 +157,12 @@ fn new(dir: &Path, schema: &Path, runtime_path: Option<&Path>) -> anyhow::Result
     }
     std::fs::create_dir_all(dir).with_context(|| format!("création de `{}`", dir.display()))?;
     std::fs::copy(schema, dir.join("forge.json")).context("copie du schéma")?;
-    let code = generate(dir, runtime_path, false)?;
+    let code = generate(dir, libraries, false)?;
     if code == ExitCode::SUCCESS {
         println!(
-            "\nProjet créé. Pour démarrer l'API :\n  cd {}/backend && cargo run",
+            "\nProjet créé.\n  API :         cd {0}/backend && cargo run\n  \
+             Application : cd {0}/app && flutter run -d chrome \
+             --dart-define=FORGE_API_URL=http://localhost:8080",
             dir.display()
         );
     }
@@ -156,19 +171,35 @@ fn new(dir: &Path, schema: &Path, runtime_path: Option<&Path>) -> anyhow::Result
 
 fn generate(
     dir: &Path,
-    runtime_path: Option<&Path>,
+    libraries: &Libraries,
     allow_destructive: bool,
 ) -> anyhow::Result<ExitCode> {
     let Some((source, model)) = load(&dir.join("forge.json"))? else {
         return Ok(ExitCode::FAILURE);
     };
-    let runtime = runtime_path.unwrap_or(Path::new(RUNTIME_PATH));
-    let runtime = runtime
-        .canonicalize()
-        .with_context(|| format!("forge-runtime introuvable : `{}`", runtime.display()))?;
-    let backend = dir.canonicalize()?.join("backend");
+    let locate = |path: Option<&PathBuf>, default: &str, name: &str| {
+        let path = path.map_or(Path::new(default), PathBuf::as_path);
+        path.canonicalize()
+            .with_context(|| format!("{name} introuvable : `{}`", path.display()))
+    };
+    let runtime = locate(
+        libraries.runtime_path.as_ref(),
+        RUNTIME_PATH,
+        "forge-runtime",
+    )?;
+    let flutter = locate(
+        libraries.flutter_path.as_ref(),
+        FLUTTER_PATH,
+        "forge_flutter",
+    )?;
+    let project = dir.canonicalize()?;
     let options = Options {
-        runtime_path: relative_path(&backend, &runtime).display().to_string(),
+        runtime_path: relative_path(&project.join("backend"), &runtime)
+            .display()
+            .to_string(),
+        flutter_path: relative_path(&project.join("app"), &flutter)
+            .display()
+            .to_string(),
         allow_destructive,
     };
 

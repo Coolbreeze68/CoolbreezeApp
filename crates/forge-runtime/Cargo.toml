@@ -50,6 +50,7 @@ utoipa-swagger-ui.workspace = true
 workspace = true
 
 [dev-dependencies]
+tower.workspace = true
 
 [[test]]
 name = "auth"

@@ -118,3 +118,50 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: ./scripts/e2e-evolution.sh
+
+  flutter:
+    name: Flutter (forge_flutter, app du CRM, bout en bout)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: forge_flutter
+        working-directory: packages/forge_flutter
+        run: |
+          flutter pub get
+          dart format --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
+      - name: App du CRM (code généré formaté, analyse, tests, compilation web)
+        working-directory: examples/crm/app
+        run: |
+          flutter pub get
+          dart format --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
+          flutter build web
+      - name: Client contre le backend réel
+        env:
+          FORGE_ADMIN_EMAIL: admin@crm.test
+          FORGE_ADMIN_PASSWORD: motdepasse123
+          FORGE_ADDR: 127.0.0.1:8080
+          DATABASE_URL: sqlite://${{ runner.temp }}/e2e.db?mode=rwc
+        run: |
+          cargo build -p mini_crm
+          ./target/debug/mini_crm &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
+          cd examples/crm/app
+          FORGE_E2E_URL=http://127.0.0.1:8080 flutter test test/api_test.dart
+      - name: "forge new : l'app générée passe ses tests"
+        run: |
+          cargo build -p forge-cli
+          ./target/debug/forge new "$RUNNER_TEMP/projet" --schema examples/crm/forge.json
+          cd "$RUNNER_TEMP/projet/app"
+          flutter pub get
+          flutter analyze
+          flutter test

@@ -1,0 +1,13 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    - web/**
+
+formatter:
+  trailing_commas: preserve
+
+linter:
+  rules:
+    - prefer_single_quotes

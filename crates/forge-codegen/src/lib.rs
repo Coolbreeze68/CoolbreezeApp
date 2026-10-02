@@ -1,8 +1,9 @@
 //! Génération des applications forge.
 //!
 //! [`generate`] produit les fichiers d'un projet à partir de son schéma validé :
-//! - `backend/src/generated/` est réécrit à chaque fois (fichiers obsolètes supprimés) ;
-//! - le code utilisateur (`src/custom/`, `main.rs`, `Cargo.toml`) n'est créé qu'une fois ;
+//! - `backend/src/generated/` et `app/lib/generated/` sont réécrits à chaque fois
+//!   (fichiers obsolètes supprimés) ;
+//! - le code utilisateur (`custom/`, points d'entrée, manifestes) n'est créé qu'une fois ;
 //! - une migration n'est créée que si la structure de stockage a changé
 //!   (comparée à `.forge/snapshot.json`) ; une migration qui perdrait des données
 //!   exige [`Options::allow_destructive`].
@@ -10,8 +11,10 @@
 //! Deux générations successives ne produisent aucun changement.
 
 mod backend;
+mod dart;
 mod diff;
 mod error;
+mod flutter;
 mod layout;
 mod migration;
 mod render;
@@ -28,6 +31,7 @@ pub use layout::Layout;
 pub use writer::{OutputFile, Policy, Report};
 
 use crate::backend::Backend;
+use crate::flutter::Flutter;
 use crate::render::Renderer;
 
 /// Fichier d'état : structure de stockage à la dernière migration générée.
@@ -38,6 +42,8 @@ const MIGRATIONS_DIR: &str = "backend/src/migrations";
 pub struct Options {
     /// Chemin de la crate `forge-runtime`, relatif au dossier `backend/` du projet.
     pub runtime_path: String,
+    /// Chemin du package `forge_flutter`, relatif au dossier `app/` du projet.
+    pub flutter_path: String,
     /// Autorise une migration qui supprime ou convertit des données.
     pub allow_destructive: bool,
 }
@@ -102,7 +108,13 @@ pub fn generate(
         migrations: &migrations,
     };
     files.extend(backend.files(&renderer)?);
-    writer::write(project, &files, backend::GENERATED_DIRS, &mut report)?;
+    let flutter = Flutter {
+        model,
+        package_path: &options.flutter_path,
+    };
+    files.extend(flutter.files(&renderer)?);
+    let generated_dirs = [backend::GENERATED_DIRS, flutter::GENERATED_DIRS].concat();
+    writer::write(project, &files, &generated_dirs, &mut report)?;
 
     report.warnings.extend(check_dependencies(project));
     for table in orphan_hooks(project, model)? {

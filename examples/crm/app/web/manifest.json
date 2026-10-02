@@ -1,0 +1,9 @@
+{
+  "name": "mini_crm",
+  "short_name": "mini_crm",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#3F51B5",
+  "description": "mini_crm"
+}

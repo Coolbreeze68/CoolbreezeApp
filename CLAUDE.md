@@ -17,7 +17,16 @@ TEST_DATABASE_URL=postgres://… cargo test -p forge-runtime --test migration  #
 TEST_CACHE_URL=redis://localhost:6379 cargo test -p mini_crm --features forge-runtime/redis  # CRM avec Redis
 TEST_CACHE_URL=redis://… cargo test -p forge-runtime --features redis --test redis -- --include-ignored
 ./scripts/e2e-evolution.sh                              # scénario complet (DATABASE_URL : base vide)
+(cd packages/forge_flutter && dart format --set-exit-if-changed lib test && flutter analyze && flutter test)
+(cd examples/crm/app && dart format --set-exit-if-changed lib test && flutter analyze && flutter test)
+FORGE_E2E_URL=http://127.0.0.1:8080 flutter test test/api_test.dart   # dans examples/crm/app, backend du CRM lancé
 ```
+
+Flutter n'est pas préinstallé dans l'environnement cloud : archive stable de
+`storage.googleapis.com/flutter_infra_release` décompressée dans `/opt/flutter`.
+Pour tester l'app web dans Chromium (Playwright) : `flutter build web
+--no-web-resources-cdn` (CDN bloqué) et `locale: 'fr-FR'` sur la page (la langue
+par défaut du Chromium headless fait échouer le moteur Flutter).
 
 Tests de cohérence : `json_schema_file_is_up_to_date` échoue si `forge.schema.json`
 est obsolète, `crm_example_is_up_to_date` si `examples/crm` ne correspond plus à ce
@@ -42,12 +51,13 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 |---|---|
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`, `typecheck` (trait `TypeEnv`), `eval` (trait `Env`, sémantique NULL). `FunctionRegistry` : signatures (arité, types, agrégat, volatile) et implémentations (intégrées et personnalisées). Aucune connaissance du schéma. |
 | `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `graphql` : noms GraphQL dérivés des tables et détection de leurs conflits. `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
-| `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
+| `forge-codegen` | `flutter` : fichiers de `app/` (schéma et modèles Dart écrits en Rust, le reste par templates `templates/flutter/`). `dart` : expressions Dart mises en forme comme `dart format` (80 colonnes, un élément par ligne sinon). `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
 | `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : trait `Service` (opérations d'une table, indépendantes du transport : liste, lecture, agrégats, écriture, import) implémenté par `Resource<E, H>` pour chaque entité. `rest`, `graphql` (schéma dynamique, `DataLoader` des références) et `csv_io` n'appellent que `Service`. `openapi` : document OpenAPI écrit en JSON depuis le modèle, chargé dans `utoipa` et servi par Swagger UI. `cache` : trait `Cache` (`MemoryCache` moka, `RedisCache` sous feature `redis`), `Reads` (clés versionnées, dépendances par table calculées par `compute::read_dependencies`). `observability` : journaux (`LogFormat`), `x-request-id`, trace, métriques Prometheus, `/health`, `/metrics`. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`, `graphql`, `request_text`), `check_resources` (CRUD REST, aller-retour CSV, GraphQL), `check_rules`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
+| `packages/forge_flutter` | Package Dart. `schema` : `AppSchema`/`TableSchema`/`ColumnSchema` (const, générés). `api/` : `ForgeClient` (session, renouvellement unique sur `401`, `ApiException`), `TableClient<T>`, `ListQuery`/`Filter`, `KeyValueStore` (`SecureStore`, `MemoryStore`). `values` : JSON ↔ Dart, `ValueFormat` (mise en forme par langue, intitulés). `forge` : `Forge.of(context)`, `DataChanges` (rechargement après écriture), `TitleCache` (intitulés de références par lots). `app`/`router` : `ForgeApp`, go_router, `Paths`. `ui/` : pages et champs. `customization` : `ForgeCustomization`. `l10n/strings` : textes fr/en. `testing.dart` : `FakeApi`. |
 
-Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
-`forge-codegen/src/render.rs`). À prévoir : `packages/forge_flutter` (phase 7).
+Templates : `templates/backend/*.j2` et `templates/flutter/*.j2`, embarqués via
+`include_str!` (liste dans `forge-codegen/src/render.rs`).
 
 ### Principes
 
@@ -63,9 +73,15 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Les hooks, les fonctions (`src/custom/functions.rs`) et les champs GraphQL
   (`src/custom/graphql.rs`, `App::graphql_query|graphql_mutation|graphql_type`)
   sont les points d'extension du code utilisateur.
+- App Flutter : `app/lib/generated/` et `app/test/generated_test.dart` sont réécrits,
+  `lib/custom/`, `main.dart`, `pubspec.yaml`, `analysis_options.yaml`, `web/` jamais.
+  `generated/app.dart` importe `../custom/customization.dart` (même principe que `#[path]`).
+- Le code Dart généré doit être stable sous `dart format` (vérifié en CI sur
+  l'exemple) : `trailing_commas: preserve` dans `analysis_options.yaml`, et
+  `dart::Expr` coupe une expression trop longue un élément par ligne.
 - `forge generate` est idempotent (fichier identique = non réécrit).
-- L'app générée dépend de `forge-runtime` par chemin (relatif, ou absolu si les
-  chemins n'ont que la racine en commun).
+- L'app générée dépend de `forge-runtime` et `forge_flutter` par chemin (relatif,
+  ou absolu si les chemins n'ont que la racine en commun).
 - Le code généré doit passer `clippy -D warnings` (lints par défaut) : l'exemple CRM
   est compilé par la CI.
 
@@ -193,4 +209,17 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
   transaction (DDL non transactionnel).
 - SQLite stocke les `decimal` en flottant (limite de sea-orm/sqlx) : réservé au
   développement et aux tests.
+- App Flutter : client REST (pas GraphQL) ; description des tables générée en Dart
+  (pas d'endpoint de schéma) ; un lookup y prend le type de la colonne lue ; les
+  règles servent à masquer les actions impossibles, les conditions `when` restent
+  vérifiées par le serveur. Colonnes `hidden` absentes de toute l'interface.
+- Modèles Dart : classes `PascalCase` (suffixe `Record` si homonyme d'un type de
+  `dart:core` ou importé), champs `camelCase` (suffixe `Value` si réservé ou membre),
+  une énumération par colonne `enum` (`<Table><Colonne>`, `value` = valeur API) ;
+  `toJson` = colonnes modifiables.
+- Après une écriture, toutes les pages ouvertes se rechargent (`DataChanges`) : une
+  écriture peut changer des formules d'autres tables.
+- `setState` ne doit jamais recevoir une fonction fléchée qui renvoie un `Future`
+  (`setState(() => _x = _load())` lève une assertion) : bloc `{ … }`.
+- CORS : désactivé par défaut, `FORGE_CORS_ORIGINS` (cli du runtime).
 - Hors périmètre v1 : temps réel, multi-tenant, workflows, upload de fichiers.

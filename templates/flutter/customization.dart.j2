@@ -1,0 +1,16 @@
+import 'package:forge_flutter/forge_flutter.dart';
+
+import 'theme.dart';
+
+/// Personnalisation de l'application, jamais écrasée par `forge generate`.
+///
+/// Points d'extension de `ForgeCustomization` : `tableIcons` (icônes du menu),
+/// `enumLabels` (libellés des valeurs d'énumération), `fields` et `cells`
+/// (champs de formulaire et affichages par colonne `table.colonne`),
+/// `detailSections` (blocs des fiches), `pages` (pages ajoutées au menu) et
+/// `strings` (textes de l'interface). Les modèles typés de
+/// `lib/generated/models.dart` facilitent l'accès à l'API.
+final customization = ForgeCustomization(
+  theme: lightTheme,
+  darkTheme: darkTheme,
+);
