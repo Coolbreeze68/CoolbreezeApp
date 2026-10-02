@@ -1,0 +1,15 @@
+[package]
+name = "forge-formula"
+description = "Langage de formules de forge : lexer, parser, AST et registre de fonctions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rust_decimal.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

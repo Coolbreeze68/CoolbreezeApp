@@ -1,0 +1,434 @@
+{
+  "$defs": {
+    "Action": {
+      "oneOf": [
+        {
+          "enum": [
+            "read",
+            "create",
+            "update",
+            "delete"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "*",
+          "description": "Toutes les actions.",
+          "type": "string"
+        }
+      ]
+    },
+    "App": {
+      "additionalProperties": false,
+      "properties": {
+        "default_locale": {
+          "description": "Langue par défaut ; doit figurer dans `locales`.",
+          "type": "string"
+        },
+        "locales": {
+          "description": "Langues supportées, par exemple `[\"fr\", \"en\"]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Identifiant de l'application (`snake_case`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "default_locale",
+        "locales"
+      ],
+      "type": "object"
+    },
+    "CalendarView": {
+      "additionalProperties": false,
+      "description": "Vue calendrier : un début, et une fin ou une durée.",
+      "properties": {
+        "duration": {
+          "default": null,
+          "description": "Colonne `duration`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end": {
+          "default": null,
+          "description": "Colonne de fin, du même type que `start`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Colonne `date` ou `datetime`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start"
+      ],
+      "type": "object"
+    },
+    "Column": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "default": null,
+          "description": "Valeur par défaut, du type de la colonne."
+        },
+        "formula": {
+          "default": null,
+          "description": "Formule de calcul, par exemple `montant * probabilite / 100`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hidden": {
+          "default": false,
+          "description": "Absente des vues ; reste accessible via l'API selon les règles.",
+          "type": "boolean"
+        },
+        "inverse": {
+          "default": null,
+          "description": "`reference` / `reference_list` : nom de la relation inverse sur la table cible\n(par défaut, le nom de la table courante). Utilisable dans les agrégats.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Nom de la colonne (`snake_case`).",
+          "type": "string"
+        },
+        "path": {
+          "default": null,
+          "description": "`lookup` : chemin de références, par exemple `entreprise.secteur`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "persist": {
+          "default": false,
+          "description": "Avec `formula` : valeur calculée à l'écriture et stockée en base.",
+          "type": "boolean"
+        },
+        "renamed_from": {
+          "default": null,
+          "description": "Ancien nom de la colonne, pour une migration par renommage sans perte.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required": {
+          "default": false,
+          "description": "Valeur obligatoire.",
+          "type": "boolean"
+        },
+        "target": {
+          "default": null,
+          "description": "`reference` / `reference_list` : table cible.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title_field": {
+          "default": false,
+          "description": "Compose l'intitulé du record (plusieurs colonnes possibles, dans l'ordre).",
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/ColumnType"
+        },
+        "unique": {
+          "default": false,
+          "description": "Valeur unique dans la table.",
+          "type": "boolean"
+        },
+        "values": {
+          "default": null,
+          "description": "`enum` : valeurs autorisées (`snake_case`).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ColumnType": {
+      "oneOf": [
+        {
+          "enum": [
+            "string",
+            "text",
+            "integer",
+            "decimal",
+            "boolean",
+            "date",
+            "datetime"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "duration",
+          "description": "Durée en secondes.",
+          "type": "string"
+        },
+        {
+          "const": "enum",
+          "description": "Valeur parmi `values`.",
+          "type": "string"
+        },
+        {
+          "const": "reference",
+          "description": "Relation N→1 vers `target`.",
+          "type": "string"
+        },
+        {
+          "const": "reference_list",
+          "description": "Relation N↔N vers `target` (table de jointure générée).",
+          "type": "string"
+        },
+        {
+          "const": "lookup",
+          "description": "Valeur lue via un chemin de références (`path`), en lecture seule.",
+          "type": "string"
+        }
+      ]
+    },
+    "Label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Libellé affiché : texte unique ou traduction par langue."
+    },
+    "Parameter": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "default": null
+        },
+        "label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/ColumnType"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Rule": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "type": "array"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "when": {
+          "default": null,
+          "description": "Condition sur le record, par exemple `owner == $user.id`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "roles",
+        "actions"
+      ],
+      "type": "object"
+    },
+    "StatsView": {
+      "additionalProperties": false,
+      "description": "Vue statistiques : somme, moyenne, min, max et graphiques.",
+      "properties": {
+        "fields": {
+          "description": "Colonnes numériques (`integer`, `decimal`, `duration`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "group_by": {
+          "default": null,
+          "description": "Regroupement par une colonne `enum`, `boolean`, `reference` ou `string`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "type": "object"
+    },
+    "Table": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "description": "Colonnes métier. `id`, `created_at`, `updated_at` et `owner` sont ajoutées automatiquement.",
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "type": "array"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Nom de la table (`snake_case`, singulier conseillé).",
+          "type": "string"
+        },
+        "rules": {
+          "description": "Règles d'autorisation. Sans règle, seul `admin` a accès à la table.",
+          "items": {
+            "$ref": "#/$defs/Rule"
+          },
+          "type": "array"
+        },
+        "views": {
+          "$ref": "#/$defs/Views"
+        }
+      },
+      "required": [
+        "name",
+        "columns"
+      ],
+      "type": "object"
+    },
+    "Views": {
+      "additionalProperties": false,
+      "properties": {
+        "calendar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CalendarView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatsView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Description complète d'une application forge.",
+  "properties": {
+    "$schema": {
+      "default": null,
+      "description": "Chemin vers `forge.schema.json`, pour l'autocomplétion dans l'éditeur.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "app": {
+      "$ref": "#/$defs/App"
+    },
+    "parameters": {
+      "description": "Paramètres globaux, éditables par l'admin et lisibles dans les formules via `$param.nom`.",
+      "items": {
+        "$ref": "#/$defs/Parameter"
+      },
+      "type": "array"
+    },
+    "roles": {
+      "description": "Rôles utilisateurs. Le rôle `admin` est obligatoire.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tables": {
+      "items": {
+        "$ref": "#/$defs/Table"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "app",
+    "roles",
+    "tables"
+  ],
+  "title": "forge",
+  "type": "object"
+}
