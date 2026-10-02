@@ -22,6 +22,12 @@ TEST_CACHE_URL=redis://… cargo test -p forge-runtime --features redis --test r
 FORGE_E2E_URL=http://127.0.0.1:8080 flutter test test/api_test.dart   # dans examples/crm/app, backend du CRM lancé
 ```
 
+Docker : `dockerd` se lance dans l'environnement cloud (`nohup dockerd &`), mais
+les conteneurs ne passent que par le proxy HTTPS : pour un test local, construire
+avec `--network host`, les `--build-arg http(s)_proxy`, le certificat
+`/root/.ccr/ca-bundle.crt` et apt en HTTPS (copie locale du Dockerfile, jamais
+versionnée).
+
 Flutter n'est pas préinstallé dans l'environnement cloud : archive stable de
 `storage.googleapis.com/flutter_infra_release` décompressée dans `/opt/flutter`.
 Pour tester l'app web dans Chromium (Playwright) : `flutter build web
@@ -33,8 +39,8 @@ est obsolète, `crm_example_is_up_to_date` si `examples/crm` ne correspond plus 
 que produit le générateur. `examples/crm/backend` est membre du workspace : son test
 CRUD généré tourne avec `cargo test`.
 
-Postgres, MariaDB et Redis peuvent être installés localement (pas de Docker dans
-l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
+Postgres, MariaDB et Redis peuvent être installés localement ; la CI teste
+PostgreSQL 16 et MySQL 8.4, et construit l'image Docker du CRM.
 
 ## Règles de travail
 
@@ -51,12 +57,12 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 |---|---|
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`, `typecheck` (trait `TypeEnv`), `eval` (trait `Env`, sémantique NULL). `FunctionRegistry` : signatures (arité, types, agrégat, volatile) et implémentations (intégrées et personnalisées). Aucune connaissance du schéma. |
 | `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `graphql` : noms GraphQL dérivés des tables et détection de leurs conflits. `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
-| `forge-codegen` | `flutter` : fichiers de `app/` (schéma et modèles Dart écrits en Rust, le reste par templates `templates/flutter/`). `dart` : expressions Dart mises en forme comme `dart format` (80 colonnes, un élément par ligne sinon). `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
+| `forge-codegen` | `infra` : Dockerfile, docker-compose, `.env.example`, CI GitHub et `scripts/use-forge.sh` du projet (templates `templates/infra/`, créés une fois). `flutter` : fichiers de `app/` (schéma et modèles Dart écrits en Rust, le reste par templates `templates/flutter/`). `dart` : expressions Dart mises en forme comme `dart format` (80 colonnes, un élément par ligne sinon). `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
 | `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : trait `Service` (opérations d'une table, indépendantes du transport : liste, lecture, agrégats, écriture, import) implémenté par `Resource<E, H>` pour chaque entité. `rest`, `graphql` (schéma dynamique, `DataLoader` des références) et `csv_io` n'appellent que `Service`. `openapi` : document OpenAPI écrit en JSON depuis le modèle, chargé dans `utoipa` et servi par Swagger UI. `cache` : trait `Cache` (`MemoryCache` moka, `RedisCache` sous feature `redis`), `Reads` (clés versionnées, dépendances par table calculées par `compute::read_dependencies`). `observability` : journaux (`LogFormat`), `x-request-id`, trace, métriques Prometheus, `/health`, `/metrics`. `compute` : formules et lookups (`complete` à la lecture, `propagate` des formules persistées après écriture ; `graph` charge les lignes par lots, `paths` résout les chemins). `aggregate` : `/api/<table>/aggregate` en SQL. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`, `graphql`, `request_text`), `check_resources` (CRUD REST, aller-retour CSV, GraphQL), `check_rules`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 | `packages/forge_flutter` | Package Dart. `schema` : `AppSchema`/`TableSchema`/`ColumnSchema` (const, générés). `api/` : `ForgeClient` (session, renouvellement unique sur `401`, `ApiException`), `TableClient<T>`, `ListQuery`/`Filter`, `KeyValueStore` (`SecureStore`, `MemoryStore`). `values` : JSON ↔ Dart, `ValueFormat` (mise en forme par langue, intitulés). `forge` : `Forge.of(context)`, `DataChanges` (rechargement après écriture), `TitleCache` (intitulés de références par lots). `app`/`router` : `ForgeApp`, go_router, `Paths`. `ui/` : pages et champs. `customization` : `ForgeCustomization`. `l10n/strings` : textes fr/en. `testing.dart` : `FakeApi`. |
 
-Templates : `templates/backend/*.j2` et `templates/flutter/*.j2`, embarqués via
+Templates : `templates/{backend,flutter,infra}/*.j2`, embarqués via
 `include_str!` (liste dans `forge-codegen/src/render.rs`).
 
 ### Principes
@@ -222,4 +228,15 @@ Templates : `templates/backend/*.j2` et `templates/flutter/*.j2`, embarqués via
 - `setState` ne doit jamais recevoir une fonction fléchée qui renvoie un `Future`
   (`setState(() => _x = _load())` lève une assertion) : bloc `{ … }`.
 - CORS : désactivé par défaut, `FORGE_CORS_ORIGINS` (cli du runtime).
+- Déploiement : une image (API + app web servie par `FORGE_STATIC_DIR`, routes
+  `/api/` inconnues toujours en JSON) ; PostgreSQL 17 et Redis (profil) dans
+  docker-compose ; aucune publication d'image (pas de registre). Les sources de
+  forge entrent dans l'image comme contexte nommé `forge` (`Options::forge_path` :
+  racine des sources, deux niveaux au-dessus de `crates/forge-runtime`) ;
+  `scripts/use-forge.sh` y repointe `backend/Cargo.toml` et `app/pubspec.yaml`.
+  L'image ne copie que `Cargo.toml`, `Cargo.lock`, `crates/` et
+  `packages/forge_flutter` : les membres du workspace hors `crates/` doivent être
+  facultatifs (motif `examples/*/backend`).
+- Variables d'environnement vides = absentes (docker-compose transmet `${X:-}`).
+- `mon_app health` : `GET /health` local sans client HTTP (`HEALTHCHECK`).
 - Hors périmètre v1 : temps réel, multi-tenant, workflows, upload de fichiers.

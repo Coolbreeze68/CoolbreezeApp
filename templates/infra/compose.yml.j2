@@ -1,0 +1,52 @@
+# {{ app_name }} : API et application web, base PostgreSQL, cache Redis en option.
+#
+#   cp .env.example .env               # puis renseignez les secrets
+#   docker compose up --build          # http://localhost:8080
+#   docker compose --profile redis up --build   # avec Redis (voir .env.example)
+
+name: {{ app_name }}
+
+services:
+  app:
+    build:
+      context: .
+      additional_contexts:
+        forge: ${FORGE_SOURCES:-{{ forge_path }}}
+      args:
+        CARGO_FEATURES: ${CARGO_FEATURES:-}
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-forge}:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD dans .env}@db:5432/${POSTGRES_DB:-{{ app_name }}}
+      FORGE_JWT_SECRET: ${FORGE_JWT_SECRET:?définissez FORGE_JWT_SECRET dans .env}
+      FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:-}
+      FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:-}
+      FORGE_CACHE_URL: ${FORGE_CACHE_URL:-}
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-forge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:-{{ app_name }}}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    profiles: [redis]
+    restart: unless-stopped
+
+volumes:
+  db:

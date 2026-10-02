@@ -23,10 +23,7 @@ n'est jamais écrasé par une régénération.
 | 5 | GraphQL (schéma dynamique, parité avec REST, résolveurs personnalisés), import/export CSV, OpenAPI + Swagger UI | ✅ |
 | 6 | Observabilité (journaux JSON, identifiant de requête, `/metrics`, `/health`), cache des lectures (mémoire ou Redis) invalidé à l'écriture | ✅ |
 | 7 | Application Flutter (web et mobile) : listes, fiches, formulaires, calendrier, statistiques, CSV, comptes ; modèles Dart typés | ✅ |
-| 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
-
-Ce qui n'est **pas encore** disponible (phase suivante) : Docker et les GitHub
-Actions de l'application générée.
+| 8 | Image Docker (API et app web), docker-compose (PostgreSQL, Redis en option), GitHub Actions du projet généré | ✅ |
 
 ## Installation
 
@@ -76,6 +73,11 @@ forge new crm --schema examples/crm/forge.json
 crm/
 ├── forge.json                 # votre schéma : la source de vérité
 ├── .forge/snapshot.json       # structure de stockage à la dernière migration
+├── Dockerfile, .dockerignore  # image : API + application web (créés une fois)
+├── docker-compose.yml         # avec PostgreSQL, Redis en option (créé une fois)
+├── .env.example               # secrets à recopier dans .env (créé une fois)
+├── .github/workflows/ci.yml   # CI du projet (créée une fois)
+├── scripts/use-forge.sh       # repointe les dépendances vers des sources de forge (Docker, CI)
 ├── app/                       # application Flutter (web, Android, iOS)
 │   ├── pubspec.yaml           # à vous (créé une fois)
 │   ├── lib/main.dart          # à vous (créé une fois)
@@ -137,6 +139,7 @@ le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
 | `FORGE_CACHE_TTL` | `60` | Durée de vie des lectures en cache, en secondes ; `0` désactive le cache |
 | `FORGE_CACHE_URL` | — | Cache Redis partagé (`redis://hôte:6379`), feature `redis` ; sinon cache en mémoire |
 | `FORGE_CORS_ORIGINS` | — | Origines autorisées à appeler l'API depuis un navigateur (virgules ; `*` pour toutes) |
+| `FORGE_STATIC_DIR` | — | Application web servie par l'API (dossier de `flutter build web`) |
 | `RUST_LOG` | `info,sqlx=warn` | Niveau des journaux |
 | `FORGE_LOG_FORMAT` | `text` (debug), `json` (release) | Format des journaux |
 
@@ -399,7 +402,47 @@ vérifie que chaque modèle relit et réécrit un enregistrement. Pour vos tests
 contre un backend réel, [`test/api_test.dart`](examples/crm/app/test/api_test.dart),
 lancé avec `FORGE_E2E_URL=http://localhost:8080 flutter test test/api_test.dart`.
 
-### 9. Faire évoluer le schéma
+### 9. Déployer avec Docker
+
+L'image contient l'API et l'application web, qu'elle sert elle-même
+(`FORGE_STATIC_DIR`) : une seule origine, donc pas de CORS. Le projet dépendant
+des sources de forge, celles-ci sont passées à la construction comme contexte
+nommé `forge` (chemin dans `FORGE_SOURCES`, préréglé par `forge new`).
+
+```bash
+cd crm
+cp .env.example .env          # renseignez FORGE_JWT_SECRET, POSTGRES_PASSWORD, compte admin
+docker compose up --build     # http://localhost:8080 : application, API, /docs, /graphql
+docker compose --profile redis up --build   # avec le cache Redis (voir .env.example)
+```
+
+| Fichier | Contenu |
+|---|---|
+| `Dockerfile` | trois étapes : `flutter build web` (SDK officiel, version épinglée par `FLUTTER_VERSION`), `cargo build --release` (features en option : `CARGO_FEATURES`), image finale Debian slim, utilisateur non root, données dans `/data` |
+| `docker-compose.yml` | l'application, PostgreSQL 17 (volume `db`, démarrage attendu), Redis dans le profil `redis` |
+| `.env.example` | secrets et réglages ; `.env` n'est ni versionné ni copié dans l'image |
+
+Sans docker-compose, l'image démarre seule sur SQLite (`/data/data.db`) :
+
+```bash
+docker build --build-context forge=../forge -t crm .
+docker run -p 8080:8080 -v crm-data:/data -e FORGE_JWT_SECRET=… -e FORGE_ADMIN_EMAIL=… -e FORGE_ADMIN_PASSWORD=… crm
+```
+
+Le binaire a une sous-commande `health` (`mini_crm health`), utilisée par le
+`HEALTHCHECK` de l'image : elle interroge `/health` sur le port de `FORGE_ADDR`.
+
+#### Intégration continue
+
+`.github/workflows/ci.yml` (créé une fois) teste à chaque push et pull request :
+le backend (`cargo fmt`, `clippy`, tests sur SQLite puis PostgreSQL),
+l'application (`flutter analyze`, tests, compilation web), puis construit l'image
+et vérifie qu'elle démarre, sert l'application et accepte une connexion. Aucune
+image n'est publiée. Le workflow récupère les sources de forge depuis le dépôt
+indiqué par la variable `FORGE_REPOSITORY` du dépôt GitHub (`FORGE_REF` pour une
+branche ou un tag, secret `FORGE_TOKEN` si ce dépôt est privé).
+
+### 10. Faire évoluer le schéma
 
 Ajoutons une colonne `effectif` aux entreprises et renommons `ville` en `commune`
 dans `forge.json` :
@@ -814,7 +857,7 @@ crates/
 packages/
 └── forge_flutter/  logique de l'app Flutter : client de l'API (session, erreurs), listes, fiches,
                     formulaires, filtres, calendrier, statistiques, CSV, comptes, personnalisation
-templates/          templates minijinja (backend/, flutter/), embarqués dans le binaire
+templates/          templates minijinja (backend/, flutter/, infra/), embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)
 scripts/            scénario de bout en bout (évolution du schéma)
 ```

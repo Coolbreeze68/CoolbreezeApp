@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "examples/crm/backend"]
+# Les exemples sont facultatifs : les images Docker copient seulement `crates/`.
+members = ["crates/*", "examples/*/backend"]
 
 [workspace.package]
 version = "0.1.0"
@@ -57,9 +58,9 @@ sha2 = "0.10"
 tempfile = "3"
 toml = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.7", features = ["cors", "request-id", "trace", "util"] }
+tower-http = { version = "0.7", features = ["cors", "fs", "request-id", "trace", "util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = "6"

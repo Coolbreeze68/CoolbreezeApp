@@ -114,6 +114,30 @@ const TEMPLATES: &[(&str, &str)] = &[
         "flutter/theme.dart",
         include_str!("../../../templates/flutter/theme.dart.j2"),
     ),
+    (
+        "infra/compose.yml",
+        include_str!("../../../templates/infra/compose.yml.j2"),
+    ),
+    (
+        "infra/ci.yml",
+        include_str!("../../../templates/infra/ci.yml.j2"),
+    ),
+    (
+        "infra/dockerfile",
+        include_str!("../../../templates/infra/dockerfile.j2"),
+    ),
+    (
+        "infra/dockerignore",
+        include_str!("../../../templates/infra/dockerignore.j2"),
+    ),
+    (
+        "infra/env_example",
+        include_str!("../../../templates/infra/env_example.j2"),
+    ),
+    (
+        "infra/use_forge.sh",
+        include_str!("../../../templates/infra/use_forge.sh.j2"),
+    ),
 ];
 
 pub(crate) struct Renderer {

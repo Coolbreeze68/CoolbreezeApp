@@ -193,6 +193,9 @@ fn generate(
         "forge_flutter",
     )?;
     let project = dir.canonicalize()?;
+    // Racine des sources de forge (`crates/forge-runtime` en est à deux niveaux) :
+    // contexte de construction de l'image Docker.
+    let forge_root = runtime.parent().and_then(Path::parent).unwrap_or(&runtime);
     let options = Options {
         runtime_path: relative_path(&project.join("backend"), &runtime)
             .display()
@@ -200,6 +203,7 @@ fn generate(
         flutter_path: relative_path(&project.join("app"), &flutter)
             .display()
             .to_string(),
+        forge_path: relative_path(&project, forge_root).display().to_string(),
         allow_destructive,
     };
 

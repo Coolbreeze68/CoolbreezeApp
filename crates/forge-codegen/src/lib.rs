@@ -15,6 +15,7 @@ mod dart;
 mod diff;
 mod error;
 mod flutter;
+mod infra;
 mod layout;
 mod migration;
 mod render;
@@ -32,6 +33,7 @@ pub use writer::{OutputFile, Policy, Report};
 
 use crate::backend::Backend;
 use crate::flutter::Flutter;
+use crate::infra::Infra;
 use crate::render::Renderer;
 
 /// Fichier d'état : structure de stockage à la dernière migration générée.
@@ -44,6 +46,9 @@ pub struct Options {
     pub runtime_path: String,
     /// Chemin du package `forge_flutter`, relatif au dossier `app/` du projet.
     pub flutter_path: String,
+    /// Sources de forge (racine du dépôt), relatives au dossier du projet :
+    /// contexte de construction de l'image Docker.
+    pub forge_path: String,
     /// Autorise une migration qui supprime ou convertit des données.
     pub allow_destructive: bool,
 }
@@ -113,6 +118,11 @@ pub fn generate(
         package_path: &options.flutter_path,
     };
     files.extend(flutter.files(&renderer)?);
+    let infra = Infra {
+        app_name: &model.spec().app.name,
+        forge_path: &options.forge_path,
+    };
+    files.extend(infra.files(&renderer)?);
     let generated_dirs = [backend::GENERATED_DIRS, flutter::GENERATED_DIRS].concat();
     writer::write(project, &files, &generated_dirs, &mut report)?;
 

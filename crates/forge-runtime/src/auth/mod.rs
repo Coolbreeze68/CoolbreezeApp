@@ -92,13 +92,15 @@ impl AuthConfig {
         }
     }
 
-    /// Lit `FORGE_JWT_SECRET`, `FORGE_ADMIN_EMAIL` et `FORGE_ADMIN_PASSWORD`.
+    /// Lit `FORGE_JWT_SECRET`, `FORGE_ADMIN_EMAIL` et `FORGE_ADMIN_PASSWORD`
+    /// (une variable vide compte comme absente).
     ///
     /// Sans secret, un secret aléatoire est tiré : les sessions ne survivent
     /// alors pas au redémarrage du serveur.
     pub fn from_env() -> Self {
-        let secret = std::env::var("FORGE_JWT_SECRET").map_or_else(
-            |_| {
+        let env = |name| std::env::var(name).ok().filter(|v: &String| !v.is_empty());
+        let secret = env("FORGE_JWT_SECRET").map_or_else(
+            || {
                 tracing::warn!(
                     "FORGE_JWT_SECRET absent : secret aléatoire, sessions perdues au redémarrage"
                 );
@@ -107,10 +109,9 @@ impl AuthConfig {
             String::into_bytes,
         );
         let mut config = Self::new(secret);
-        if let (Ok(email), Ok(password)) = (
-            std::env::var("FORGE_ADMIN_EMAIL"),
-            std::env::var("FORGE_ADMIN_PASSWORD"),
-        ) {
+        if let (Some(email), Some(password)) =
+            (env("FORGE_ADMIN_EMAIL"), env("FORGE_ADMIN_PASSWORD"))
+        {
             config.initial_admin = Some(InitialAdmin { email, password });
         }
         config

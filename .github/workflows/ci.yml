@@ -165,3 +165,26 @@ jobs:
           flutter pub get
           flutter analyze
           flutter test
+
+  docker:
+    name: image Docker et docker-compose du CRM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Démarrage avec PostgreSQL (docker-compose)
+        working-directory: examples/crm
+        env:
+          FORGE_JWT_SECRET: ci
+          FORGE_ADMIN_EMAIL: admin@ci.test
+          FORGE_ADMIN_PASSWORD: motdepasse-ci
+          POSTGRES_PASSWORD: ci
+        run: |
+          docker compose up -d --build --wait
+          curl -sf http://localhost:8080/ | grep -q flutter_bootstrap.js
+          curl -sf -X POST http://localhost:8080/api/auth/login -H 'content-type: application/json' \
+            -d '{"email":"admin@ci.test","password":"motdepasse-ci"}' | grep -q access_token
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/inconnu)" = 404
+      - if: failure()
+        working-directory: examples/crm
+        run: docker compose logs

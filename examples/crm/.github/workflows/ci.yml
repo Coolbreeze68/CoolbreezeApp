@@ -1,0 +1,111 @@
+# CI de mini_crm : tests du backend (SQLite, PostgreSQL), de l'application,
+# puis construction de l'image Docker et test de démarrage. Aucune image n'est
+# publiée.
+#
+# Le projet dépend des sources de forge : renseignez la variable du dépôt
+# FORGE_REPOSITORY (Settings → Secrets and variables → Actions → Variables),
+# par exemple `utilisateur/forge`, et au besoin FORGE_REF (branche ou tag) et le
+# secret FORGE_TOKEN (dépôt privé).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  FORGE_REPOSITORY: ${{ vars.FORGE_REPOSITORY }}
+  FORGE_REF: ${{ vars.FORGE_REF || 'main' }}
+
+jobs:
+  backend:
+    name: backend (fmt, clippy, tests SQLite et PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: forge
+          POSTGRES_PASSWORD: forge
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U forge" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FORGE_REPOSITORY }}
+          ref: ${{ env.FORGE_REF }}
+          token: ${{ secrets.FORGE_TOKEN || github.token }}
+          path: .forge-sources
+      - run: sh scripts/use-forge.sh .forge-sources
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - working-directory: backend
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+      - name: Tests sur PostgreSQL
+        working-directory: backend
+        run: cargo test
+        env:
+          TEST_DATABASE_URL: postgres://forge:forge@localhost:5432/test
+
+  app:
+    name: application Flutter (analyse, tests, web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FORGE_REPOSITORY }}
+          ref: ${{ env.FORGE_REF }}
+          token: ${{ secrets.FORGE_TOKEN || github.token }}
+          path: .forge-sources
+      - run: sh scripts/use-forge.sh .forge-sources
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+          flutter build web
+
+  docker:
+    name: image Docker (construction et démarrage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FORGE_REPOSITORY }}
+          ref: ${{ env.FORGE_REF }}
+          token: ${{ secrets.FORGE_TOKEN || github.token }}
+          path: .forge-sources
+      - uses: docker/setup-buildx-action@v3
+      - name: Construction
+        run: docker buildx build --load --build-context forge=.forge-sources -t app:ci .
+      - name: Démarrage (SQLite), santé, application web et connexion
+        run: |
+          docker run -d --name app -p 8080:8080 \
+            -e FORGE_JWT_SECRET=ci -e FORGE_ADMIN_EMAIL=admin@ci.test -e FORGE_ADMIN_PASSWORD=motdepasse-ci \
+            app:ci
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/health && break; sleep 2; done
+          curl -sf http://localhost:8080/ | grep -q flutter_bootstrap.js
+          curl -sf -X POST http://localhost:8080/api/auth/login -H 'content-type: application/json' \
+            -d '{"email":"admin@ci.test","password":"motdepasse-ci"}' | grep -q access_token
+          docker exec app mini_crm health
+      - if: failure()
+        run: docker logs app
+

@@ -13,6 +13,7 @@ fn options() -> Options {
     Options {
         runtime_path: "../../../crates/forge-runtime".into(),
         flutter_path: "../../../packages/forge_flutter".into(),
+        forge_path: "../..".into(),
         allow_destructive: false,
     }
 }
