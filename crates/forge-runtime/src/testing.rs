@@ -4,9 +4,13 @@
 //! let db = forge_runtime::testing::database::<Migrator>().await;
 //! forge_runtime::testing::check_resources(app()?, db).await;
 //!
-//! // Requêtes libres, pour tester votre propre code :
-//! let client = TestClient::new(app()?, database::<Migrator>().await).await;
-//! let (status, body) = client.request(Method::POST, "/api/tag", Some(json!({ "nom": "x" }))).await;
+//! forge_runtime::testing::check_rules(app()?, database::<Migrator>().await).await;
+//!
+//! // Requêtes libres, pour tester votre propre code. Le client est connecté en
+//! // administrateur ; `as_new_user` en crée un autre avec les rôles voulus.
+//! let admin = TestClient::new(app()?, database::<Migrator>().await).await;
+//! let (status, body) = admin.request(Method::POST, "/api/tag", Some(json!({ "nom": "x" }))).await;
+//! let commercial = admin.as_new_user("vente@exemple.fr", &["commercial"]).await;
 //! ```
 //!
 //! La base de test vient de `TEST_DATABASE_URL` (SQLite en mémoire par défaut).
@@ -14,6 +18,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
 
 use axum::Router;
 use axum::body::Body;
@@ -26,35 +31,67 @@ use http_body_util::BodyExt;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 use serde_json::{Map, Value, json};
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tower::ServiceExt;
 
 use crate::app::App;
+use crate::auth::{AuthConfig, InitialAdmin};
 use crate::columns;
+use forge_schema::spec::Action;
+
+/// Administrateur créé dans la base de test.
+pub const ADMIN_EMAIL: &str = "admin@test.local";
+/// Mot de passe de tous les comptes de test.
+pub const PASSWORD: &str = "mot-de-passe-de-test";
+
+/// Base de test prête à l'emploi.
+///
+/// Sur PostgreSQL ou MySQL, la base est partagée : un verrou, gardé jusqu'à la
+/// fin du test (par le [`TestClient`] qui la reçoit), sérialise les tests d'un
+/// même binaire. Une base SQLite en mémoire est propre à chaque test.
+#[derive(Debug)]
+pub struct TestDatabase {
+    connection: DatabaseConnection,
+    guard: Option<Arc<OwnedMutexGuard<()>>>,
+}
+
+impl TestDatabase {
+    pub fn connection(&self) -> &DatabaseConnection {
+        &self.connection
+    }
+}
+
+static SHARED_DATABASE: LazyLock<Arc<Mutex<()>>> = LazyLock::new(Arc::default);
 
 /// Connexion à une base de test vierge, migrations appliquées.
 ///
 /// # Panics
 ///
 /// Si la connexion ou les migrations échouent.
-pub async fn database<M: MigratorTrait>() -> DatabaseConnection {
+pub async fn database<M: MigratorTrait>() -> TestDatabase {
     let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| "sqlite::memory:".into());
     let in_memory = url.starts_with("sqlite::memory:");
+    let guard = if in_memory {
+        None
+    } else {
+        Some(Arc::new(SHARED_DATABASE.clone().lock_owned().await))
+    };
     let mut options = ConnectOptions::new(url.clone());
     if url.starts_with("sqlite:") {
         // En mémoire, chaque connexion est une base distincte ; et les migrations
         // SQLite exigent une connexion unique (voir `migration`).
         options.max_connections(1);
     }
-    let db = Database::connect(options)
+    let connection = Database::connect(options)
         .await
         .expect("connexion à la base de test");
     let migrated = if in_memory {
-        M::up(&db, None).await
+        M::up(&connection, None).await
     } else {
-        M::fresh(&db).await
+        M::fresh(&connection).await
     };
     migrated.expect("migrations de la base de test");
-    db
+    TestDatabase { connection, guard }
 }
 
 /// Vérifie le cycle CRUD complet de chaque table du schéma, via l'API HTTP.
@@ -62,7 +99,7 @@ pub async fn database<M: MigratorTrait>() -> DatabaseConnection {
 /// # Panics
 ///
 /// À la première vérification en échec, avec la table et l'étape concernées.
-pub async fn check_resources(app: App, db: DatabaseConnection) {
+pub async fn check_resources(app: App, db: TestDatabase) {
     let model = app.schema().clone();
     let mut checker = Checker {
         client: TestClient::new(app, db).await,
@@ -73,23 +110,171 @@ pub async fn check_resources(app: App, db: DatabaseConnection) {
     }
 }
 
-/// Client HTTP en mémoire : les requêtes sont traitées par le routeur, sans réseau.
+/// Vérifie, pour chaque rôle (hors `admin`) et chaque table, que la lecture et
+/// la création sont accordées ou refusées comme le prévoient les règles, et que
+/// l'API exige d'être connecté. Les droits conditionnels (`when`) dépendent des
+/// données : ils relèvent de tests écrits pour l'application.
+///
+/// # Panics
+///
+/// À la première vérification en échec, avec le rôle et la table concernés.
+pub async fn check_rules(app: App, db: TestDatabase) {
+    let model = app.schema().clone();
+    let mut checker = Checker {
+        client: TestClient::new(app, db).await,
+        counter: 0,
+    };
+    let anonymous = checker.client.anonymous();
+    for table in model.tables() {
+        let (status, _) = anonymous
+            .request(Method::GET, &format!("/api/{}", table.name), None)
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{} : accès sans jeton",
+            table.name
+        );
+    }
+
+    for role in model.spec().roles.iter().filter(|r| *r != "admin") {
+        let user = checker
+            .client
+            .as_new_user(&format!("{role}@test.local"), &[role])
+            .await;
+        for table in model.tables() {
+            let collection = format!("/api/{}", table.name);
+            let context = format!("rôle `{role}`, table `{}`", table.name);
+
+            let (status, body) = user.request(Method::GET, &collection, None).await;
+            match grant(table, role, Action::Read) {
+                Grant::Denied => assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{context} : lecture : {body}"
+                ),
+                Grant::All | Grant::Conditional => {
+                    assert_eq!(status, StatusCode::OK, "{context} : lecture : {body}");
+                }
+            }
+
+            let grant = grant(table, role, Action::Create);
+            if grant == Grant::Conditional {
+                continue;
+            }
+            let sample = checker.sample(&model, table, 0).await;
+            let (status, body) = user
+                .request(Method::POST, &collection, Some(Value::Object(sample)))
+                .await;
+            let expected = if grant == Grant::All {
+                StatusCode::CREATED
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            assert_eq!(status, expected, "{context} : création : {body}");
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grant {
+    Denied,
+    All,
+    Conditional,
+}
+
+/// Droit d'un rôle sur une action, d'après les règles du schéma.
+fn grant(table: &Table, role: &str, action: Action) -> Grant {
+    let applicable: Vec<_> = table
+        .rules
+        .iter()
+        .filter(|r| {
+            r.roles.iter().any(|x| x == role)
+                && r.actions.iter().any(|a| *a == action || *a == Action::All)
+        })
+        .collect();
+    if applicable.is_empty() {
+        Grant::Denied
+    } else if applicable.iter().any(|r| r.when.is_none()) {
+        Grant::All
+    } else {
+        Grant::Conditional
+    }
+}
+
+/// Client HTTP en mémoire : les requêtes sont traitées par le routeur, sans
+/// réseau, avec le jeton d'accès de l'utilisateur connecté.
 #[derive(Debug, Clone)]
 pub struct TestClient {
     router: Router,
+    token: Option<String>,
+    /// Verrou de la base partagée, gardé tant que le client existe.
+    guard: Option<Arc<OwnedMutexGuard<()>>>,
 }
 
 impl TestClient {
+    /// Démarre l'application et connecte l'administrateur de test.
+    ///
     /// # Panics
     ///
-    /// Si l'application ne démarre pas.
-    pub async fn new(app: App, db: DatabaseConnection) -> Self {
+    /// Si l'application ne démarre pas ou si la connexion échoue.
+    pub async fn new(app: App, db: TestDatabase) -> Self {
+        let mut auth = AuthConfig::new("secret-de-test");
+        auth.initial_admin = Some(InitialAdmin {
+            email: ADMIN_EMAIL.into(),
+            password: PASSWORD.into(),
+        });
+        let router = app
+            .into_router(db.connection, auth)
+            .await
+            .expect("démarrage de l'application");
+        let client = Self {
+            router,
+            token: None,
+            guard: db.guard,
+        };
+        client.login(ADMIN_EMAIL).await
+    }
+
+    /// Même application, sans jeton d'accès.
+    #[must_use]
+    pub fn anonymous(&self) -> Self {
         Self {
-            router: app
-                .into_router(db)
-                .await
-                .expect("démarrage de l'application"),
+            router: self.router.clone(),
+            token: None,
+            guard: self.guard.clone(),
         }
+    }
+
+    /// Se connecte avec `email` (mot de passe [`PASSWORD`]).
+    ///
+    /// # Panics
+    ///
+    /// Si la connexion échoue.
+    pub async fn login(&self, email: &str) -> Self {
+        let mut client = self.anonymous();
+        let credentials = json!({ "email": email, "password": PASSWORD });
+        let (status, session) = client
+            .request(Method::POST, "/api/auth/login", Some(credentials))
+            .await;
+        assert_eq!(status, StatusCode::OK, "connexion de {email} : {session}");
+        client.token = session["access_token"].as_str().map(str::to_owned);
+        client
+    }
+
+    /// Crée un compte avec `roles` (le client courant doit être administrateur)
+    /// et retourne un client connecté avec ce compte.
+    ///
+    /// # Panics
+    ///
+    /// Si la création ou la connexion échoue.
+    pub async fn as_new_user(&self, email: &str, roles: &[&str]) -> Self {
+        let account = json!({ "email": email, "password": PASSWORD, "roles": roles });
+        let (status, body) = self
+            .request(Method::POST, "/api/users", Some(account))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "création de {email} : {body}");
+        self.login(email).await
     }
 
     /// Envoie une requête JSON ; retourne le statut et le corps (`Null` si vide).
@@ -103,10 +288,14 @@ impl TestClient {
         uri: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method(method)
             .uri(uri)
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        if let Some(token) = &self.token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        let request = request
             .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
             .expect("requête valide");
         let response = self.router.clone().oneshot(request).await.expect("réponse");

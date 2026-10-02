@@ -15,6 +15,9 @@ export FORGE_ADDR=127.0.0.1:18080
 export RUST_LOG=warn
 # Les migrations sont appliquées explicitement par `forge migrate`.
 export FORGE_AUTO_MIGRATE=false
+# Compte administrateur créé au premier démarrage.
+export FORGE_ADMIN_EMAIL=admin@crm.test FORGE_ADMIN_PASSWORD=mot-de-passe-admin
+export FORGE_JWT_SECRET=secret-du-scenario
 API="http://$FORGE_ADDR/api"
 FORGE="$CARGO_TARGET_DIR/debug/forge"
 PID=
@@ -29,11 +32,18 @@ start_server() {
     "$CARGO_TARGET_DIR/debug/mini_crm" &
     PID=$!
     for _ in $(seq 50); do
-        curl -sf "$API/parameters" >/dev/null && return
+        if session=$(curl -sf -X POST "$API/auth/login" -H 'content-type: application/json' \
+            -d "{\"email\": \"$FORGE_ADMIN_EMAIL\", \"password\": \"$FORGE_ADMIN_PASSWORD\"}"); then
+            TOKEN=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])' <<<"$session")
+            return
+        fi
         sleep 0.2
     done
     fail "le serveur ne répond pas"
 }
+
+# Appel authentifié de l'API.
+api() { curl -sf -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' "$@"; }
 
 stop_server() {
     kill "$PID"
@@ -61,8 +71,8 @@ cp backend/src/custom/routes.rs "$WORK/routes.rs"
 
 step "Saisie de données"
 start_server
-curl -sf -X POST "$API/entreprise" -H 'content-type: application/json' \
-    -d '{"nom": "Acme", "ville": "Lyon", "chiffre_affaires": "1500"}' >/dev/null
+curl -s -o /dev/null -w '%{http_code}' "$API/entreprise" | grep -q 401 || fail "API accessible sans jeton"
+api -X POST "$API/entreprise" -d '{"nom": "Acme", "ville": "Lyon", "chiffre_affaires": "1500"}' >/dev/null
 stop_server
 
 step 'Évolution du schéma : nouvelle colonne effectif, ville renommée en commune'
@@ -80,7 +90,7 @@ step "Migration"
 
 check_record() {
     start_server
-    record=$(curl -sf "$API/entreprise/1")
+    record=$(api "$API/entreprise/1")
     stop_server
     echo "$record"
     python3 - "$record" <<'PY'

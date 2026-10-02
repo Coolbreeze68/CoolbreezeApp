@@ -6,7 +6,8 @@
 //! ```
 //!
 //! Configuration par options ou variables d'environnement :
-//! `DATABASE_URL`, `FORGE_ADDR`, `FORGE_AUTO_MIGRATE`, `RUST_LOG`.
+//! `DATABASE_URL`, `FORGE_ADDR`, `FORGE_AUTO_MIGRATE`, `RUST_LOG`, et pour
+//! l'authentification `FORGE_JWT_SECRET`, `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD`.
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -17,6 +18,7 @@ use sea_orm_migration::MigratorTrait;
 use tracing_subscriber::EnvFilter;
 
 use crate::app::App;
+use crate::auth::AuthConfig;
 use crate::error::Error;
 
 #[derive(Debug, Parser)]
@@ -116,7 +118,7 @@ pub(crate) async fn connect(url: &str, migrating: bool) -> Result<DatabaseConnec
 }
 
 async fn serve(app: App, db: DatabaseConnection, addr: SocketAddr) -> Result<(), Error> {
-    let router = app.into_router(db).await?;
+    let router = app.into_router(db, AuthConfig::from_env()).await?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("écoute sur http://{addr}");
     axum::serve(listener, router)

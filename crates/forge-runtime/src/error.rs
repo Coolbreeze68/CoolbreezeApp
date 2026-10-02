@@ -20,6 +20,10 @@ pub enum Error {
     Validation(FieldErrors),
     #[error("requête invalide : {0}")]
     BadRequest(String),
+    #[error("authentification requise")]
+    Unauthorized,
+    #[error("{0}")]
+    Forbidden(String),
     #[error("enregistrement introuvable")]
     NotFound,
     #[error("{0}")]
@@ -44,6 +48,8 @@ impl Error {
         match self {
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Schema(_) | Self::Config(_) | Self::Database(_) | Self::Io(_) => {
@@ -56,6 +62,8 @@ impl Error {
         match self {
             Self::Validation(_) => "validation",
             Self::BadRequest(_) => "bad_request",
+            Self::Unauthorized => "unauthorized",
+            Self::Forbidden(_) => "forbidden",
             Self::NotFound => "not_found",
             Self::Conflict(_) => "conflict",
             Self::Schema(_) | Self::Config(_) | Self::Database(_) | Self::Io(_) => "internal",

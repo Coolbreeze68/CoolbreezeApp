@@ -4,6 +4,7 @@ use std::future::Future;
 
 use sea_orm::{DatabaseTransaction, EntityTrait};
 
+use crate::auth::CurrentUser;
 use crate::error::Error;
 
 /// Contexte transmis aux hooks. Toutes les opérations d'une requête
@@ -12,6 +13,7 @@ use crate::error::Error;
 pub struct HookContext<'a> {
     pub(crate) txn: &'a DatabaseTransaction,
     pub(crate) model: &'a forge_schema::Model,
+    pub(crate) user: &'a CurrentUser,
 }
 
 impl HookContext<'_> {
@@ -23,6 +25,11 @@ impl HookContext<'_> {
     /// Schéma de l'application.
     pub fn schema(&self) -> &forge_schema::Model {
         self.model
+    }
+
+    /// Utilisateur à l'origine de la requête.
+    pub fn user(&self) -> &CurrentUser {
+        self.user
     }
 }
 

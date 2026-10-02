@@ -4,7 +4,7 @@
 //! |---|---|---|
 //! | `GET` | `/api/parameters` | tous les paramètres |
 //! | `GET` | `/api/parameters/{name}` | un paramètre |
-//! | `PUT` | `/api/parameters/{name}` | modifie la valeur : `{ "value": … }` |
+//! | `PUT` | `/api/parameters/{name}` | modifie la valeur : `{ "value": … }` (admin) |
 //!
 //! Les valeurs sont stockées en JSON texte.
 
@@ -17,7 +17,12 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, EntityTrait};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
+use std::collections::BTreeMap;
+
+use forge_schema::spec::ColumnType;
+
 use crate::app::AppState;
+use crate::auth::CurrentUser;
 use crate::error::Error;
 
 pub(crate) mod entity {
@@ -63,6 +68,29 @@ pub(crate) async fn seed(db: &impl ConnectionTrait, declared: &[Parameter]) -> R
         }
     }
     Ok(())
+}
+
+/// Valeurs actuelles des paramètres déclarés, avec leur type.
+pub(crate) async fn values(
+    db: &impl ConnectionTrait,
+    declared: &[Parameter],
+) -> Result<BTreeMap<String, (ColumnType, JsonValue)>, Error> {
+    if declared.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let stored = entity::Entity::find().all(db).await?;
+    Ok(declared
+        .iter()
+        .map(|p| {
+            let value = stored
+                .iter()
+                .find(|m| m.name == p.name)
+                .and_then(|m| m.value.as_deref())
+                .and_then(|v| serde_json::from_str(v).ok())
+                .unwrap_or(JsonValue::Null);
+            (p.name.clone(), (p.ty, value))
+        })
+        .collect())
 }
 
 fn declared<'a>(state: &'a AppState, name: &str) -> Result<&'a Parameter, Error> {
@@ -116,9 +144,11 @@ struct Update {
 
 async fn write(
     State(state): State<AppState>,
+    current: CurrentUser,
     Path(name): Path<String>,
     Json(body): Json<Update>,
 ) -> Result<Json<JsonValue>, Error> {
+    current.require_admin()?;
     let param = declared(&state, &name)?;
     value::from_json(param.ty, None, &body.value).map_err(|msg| Error::validation("value", msg))?;
     let stored = entity::ActiveModel {

@@ -18,16 +18,16 @@ n'est jamais écrasé par une régénération.
 | 0 | Workspace, `forge-schema`, parser de formules, JSON Schema, `forge validate` | ✅ |
 | 1 | Backend : entités, migration initiale, CRUD REST (pagination, tri, filtres), `parameters`, hooks, routes personnalisées ; SQLite, PostgreSQL, MySQL | ✅ |
 | 2 | Migrations incrémentales : diff du schéma, renommages, protection des changements destructifs, retour arrière | ✅ |
-| 3 | Auth, rôles, moteur de règles | à venir |
+| 3 | Authentification JWT, comptes et rôles, règles d'autorisation (conditions traduites en SQL) | ✅ |
 | 4 | Évaluation des formules, lookups, `persist`, agrégats | à venir |
 | 5 | GraphQL, import/export CSV, OpenAPI | à venir |
 | 6 | Observabilité, cache | à venir |
 | 7 | Application Flutter | à venir |
 | 8 | Docker, docker-compose, GitHub Actions de l'app générée | à venir |
 
-Ce qui n'est **pas encore** disponible (phases suivantes) : l'authentification
-(`owner` reste vide), les règles d'autorisation, le calcul des formules et des
-lookups (absents des réponses), GraphQL, CSV, OpenAPI, l'application Flutter et Docker.
+Ce qui n'est **pas encore** disponible (phases suivantes) : le calcul des formules
+et des lookups (absents des réponses), GraphQL, CSV, OpenAPI, l'application Flutter
+et Docker.
 
 ## Installation
 
@@ -94,25 +94,46 @@ crm/
 
 ```bash
 cd crm/backend
+export FORGE_ADMIN_EMAIL=admin@exemple.fr FORGE_ADMIN_PASSWORD='un mot de passe solide'
+export FORGE_JWT_SECRET='une longue chaîne aléatoire'
 cargo run                        # SQLite `data.db`, port 8080, migrations appliquées
 DATABASE_URL=postgres://user:mdp@localhost/crm cargo run    # ou PostgreSQL / MySQL
 ```
 
-Variables : `DATABASE_URL`, `FORGE_ADDR` (défaut `0.0.0.0:8080`),
-`FORGE_AUTO_MIGRATE` (défaut `true`), `RUST_LOG`.
+Au premier démarrage, si la base n'a aucun utilisateur, le compte administrateur
+est créé à partir de `FORGE_ADMIN_EMAIL` et `FORGE_ADMIN_PASSWORD`.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `DATABASE_URL` | `sqlite://data.db?mode=rwc` | Base de données |
+| `FORGE_ADDR` | `0.0.0.0:8080` | Adresse d'écoute |
+| `FORGE_AUTO_MIGRATE` | `true` | Migrations appliquées au démarrage |
+| `FORGE_JWT_SECRET` | aléatoire | Signature des jetons ; sans elle, les sessions sont perdues à chaque redémarrage |
+| `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD` | — | Compte administrateur initial |
+| `RUST_LOG` | `info,sqlx=warn` | Niveau des journaux |
 
 ### 3. Utiliser l'API
 
-```bash
-curl -X POST localhost:8080/api/entreprise -H 'content-type: application/json' \
-     -d '{"nom": "Acme", "secteur": "industrie", "chiffre_affaires": "1250000.50"}'
-curl -X POST localhost:8080/api/tag -H 'content-type: application/json' -d '{"nom": "urgent"}'
-curl -X POST localhost:8080/api/opportunite -H 'content-type: application/json' \
-     -d '{"titre": "Contrat cadre", "entreprise": 1, "montant": "45000", "tags": [1]}'
+Toute l'API exige un jeton d'accès, obtenu à la connexion :
 
-curl -g 'localhost:8080/api/opportunite?etape=prospect&montant[gte]=10000&sort=-montant'
-curl -X PATCH localhost:8080/api/opportunite/1 -H 'content-type: application/json' -d '{"etape": "gagne"}'
-curl -X PUT localhost:8080/api/parameters/tva -H 'content-type: application/json' -d '{"value": 5.5}'
+```bash
+TOKEN=$(curl -s -X POST localhost:8080/api/auth/login -H 'content-type: application/json' \
+     -d '{"email": "admin@exemple.fr", "password": "un mot de passe solide"}' | jq -r .access_token)
+api() { curl -s -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' "$@"; }
+
+api -X POST localhost:8080/api/entreprise \
+    -d '{"nom": "Acme", "secteur": "industrie", "chiffre_affaires": "1250000.50"}'
+api -X POST localhost:8080/api/tag -d '{"nom": "urgent"}'
+api -X POST localhost:8080/api/opportunite \
+    -d '{"titre": "Contrat cadre", "entreprise": 1, "montant": "45000", "tags": [1]}'
+
+api -g 'localhost:8080/api/opportunite?etape=prospect&montant[gte]=10000&sort=-montant'
+api -X PATCH localhost:8080/api/opportunite/1 -d '{"etape": "gagne"}'
+api -X PUT localhost:8080/api/parameters/tva -d '{"value": 5.5}'
+
+# Un commercial, qui ne pourra modifier que ce qu'il a créé (règle `owner == $user.id`)
+api -X POST localhost:8080/api/users \
+    -d '{"email": "alice@exemple.fr", "password": "mot-de-passe-alice", "roles": ["commercial"]}'
 ```
 
 Les valeurs par défaut du schéma sont appliquées (`probabilite` vaut 50, `etape`
@@ -173,9 +194,12 @@ TEST_DATABASE_URL=postgres://… cargo test             # base recréée : base 
 ```
 
 `tests/generated_crud.rs` vérifie création, lecture, liste, filtre, modification,
-suppression et contraintes de chaque table. Pour vos propres tests,
-`forge_runtime::testing::TestClient` envoie des requêtes à l'application sans
-réseau : voir [`examples/crm/backend/tests/hooks.rs`](examples/crm/backend/tests/hooks.rs).
+suppression et contraintes de chaque table, puis les droits de lecture et de
+création de chaque rôle. Pour vos propres tests, `forge_runtime::testing::TestClient`
+envoie des requêtes à l'application sans réseau, connecté en administrateur ;
+`as_new_user` crée un compte avec les rôles voulus. Exemples :
+[`tests/hooks.rs`](examples/crm/backend/tests/hooks.rs) et
+[`tests/rules.rs`](examples/crm/backend/tests/rules.rs) (règle `owner == $user.id`).
 
 ### 7. Faire évoluer le schéma
 
@@ -250,12 +274,55 @@ filtrables et triables. Formats JSON : décimaux en texte (`"12.50"`, nombres ac
 en entrée), dates `AAAA-MM-JJ`, dates-heures RFC 3339, durées en secondes,
 `reference` = identifiant, `reference_list` = liste d'identifiants.
 
-Codes d'erreur : `400` requête mal formée, `404` introuvable, `409` conflit (valeur
+Codes d'erreur : `400` requête mal formée, `401` non authentifié, `403` non autorisé,
+`404` introuvable, `409` conflit (valeur
 unique déjà prise, référence invalide, suppression d'un enregistrement référencé par
 une référence obligatoire), `422` validation (détail par champ).
 
 Suppression : une référence obligatoire bloque la suppression de sa cible, une
 référence facultative est remise à `null`, les liens `reference_list` sont supprimés.
+
+### Authentification et comptes
+
+| Méthode | Chemin | Effet |
+|---|---|---|
+| `POST` | `/api/auth/login` | `{ email, password }` → `{ access_token, refresh_token, expires_in, user }` |
+| `POST` | `/api/auth/refresh` | `{ refresh_token }` → nouvelle session ; l'ancien jeton est révoqué |
+| `POST` | `/api/auth/logout` | `{ refresh_token }` → révocation |
+| `GET` | `/api/auth/me` | Utilisateur connecté (id, email, nom, rôles) |
+| `PUT` | `/api/auth/password` | `{ current_password, new_password }` ; ferme les autres sessions |
+| `GET`/`POST` | `/api/users` | Comptes (admin) : liste (`page`, `per_page`, `q`), création |
+| `GET`/`PATCH`/`DELETE` | `/api/users/{id}` | Compte (admin) : `email`, `password`, `display_name`, `active`, `roles` |
+
+- Jeton d'accès JWT de 15 minutes (`Authorization: Bearer …`), jeton de
+  rafraîchissement opaque de 30 jours, stocké haché et remplacé à chaque usage.
+- Mots de passe hachés avec argon2id, 8 caractères minimum.
+- Désactiver un compte ou changer son mot de passe ferme ses sessions ; un jeton
+  d'accès déjà émis reste valable jusqu'à son expiration (15 minutes au plus).
+- Un administrateur ne peut ni supprimer son propre compte, ni se retirer le rôle
+  `admin`, ni se désactiver.
+- Lecture des paramètres : tout utilisateur connecté ; modification : `admin`.
+- Le nombre de tentatives de connexion n'est pas limité par forge : à confier au
+  proxy placé devant le serveur.
+
+### Autorisations à l'exécution
+
+Évaluées à chaque requête, pour la table et l'action concernées :
+
+- le rôle `admin` a tous les droits ;
+- sinon, il faut une règle listant l'un des rôles de l'utilisateur et l'action
+  (`read`, `create`, `update`, `delete` ou `*`), faute de quoi la requête est
+  refusée (`403`) ;
+- une règle sans `when` donne accès à tous les enregistrements ; avec `when`, seuls
+  ceux qui vérifient la condition (plusieurs règles s'additionnent).
+
+Les conditions sont traduites en SQL : elles filtrent les listes, et un
+enregistrement hors du périmètre de lecture répond `404`. Modifier ou supprimer
+exige que l'enregistrement vérifie la condition de l'action, avant et après la
+modification ; créer, que le nouvel enregistrement la vérifie. `owner` reçoit
+l'identifiant du créateur, ce qui rend possible la règle `owner == $user.id`.
+
+Codes : `401` sans jeton ou jeton invalide, `403` action non autorisée.
 
 ### Bases de données
 
@@ -298,7 +365,8 @@ Les identifiants (tables, colonnes, rôles, valeurs d'enum) sont en `snake_case`
 | `views` | `calendar` : `{ start, end? \| duration? }` ; `stats` : `{ fields, group_by? }`. |
 | `rules` | Règles d'autorisation (voir plus bas). Sans règle, seul `admin` accède à la table. |
 
-Ajoutées automatiquement à chaque table : `id`, `created_at`, `updated_at`, `owner`.
+Ajoutées automatiquement à chaque table : `id`, `created_at`, `updated_at`, `owner`
+(créateur de l'enregistrement).
 Tables système réservées : `users`, `roles`, `user_roles`, `parameters`, `refresh_tokens`.
 
 ### Types de colonnes

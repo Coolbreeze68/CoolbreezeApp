@@ -17,14 +17,15 @@ use std::collections::BTreeMap;
 use sea_orm::{ConnectionTrait, DbBackend};
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::schema::{
-    big_integer_null, big_pk_auto, string, text_null, timestamp_with_time_zone,
+    big_integer, big_integer_null, big_pk_auto, boolean, string, string_null, text_null,
+    timestamp_with_time_zone,
 };
 
 use crate::links;
 
 /// Migrations système, à placer avant celles de l'application.
 pub fn system() -> Vec<Box<dyn MigrationTrait>> {
-    vec![Box::new(SystemTables)]
+    vec![Box::new(SystemTables), Box::new(AuthTables)]
 }
 
 /// Effet de la suppression d'une ligne référencée.
@@ -732,6 +733,107 @@ impl MigrationTrait for SystemTables {
         for name in ["parameters", "users"] {
             manager
                 .drop_table(Table::drop().table(Alias::new(name)).to_owned())
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+/// Authentification : colonnes de `users`, rôles et jetons de rafraîchissement.
+struct AuthTables;
+
+impl MigrationName for AuthTables {
+    fn name(&self) -> &'static str {
+        "forge_0002_auth"
+    }
+}
+
+/// Clé étrangère déclarée dans la création de la table (cibles déjà existantes).
+fn cascade(
+    table: &str,
+    column: &str,
+    target: &str,
+    target_column: &str,
+) -> ForeignKeyCreateStatement {
+    ForeignKey::create()
+        .name(format!("fk_{table}_{column}"))
+        .from(Alias::new(table), Alias::new(column))
+        .to(Alias::new(target), Alias::new(target_column))
+        .on_delete(ForeignKeyAction::Cascade)
+        .to_owned()
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for AuthTables {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // Une colonne par instruction : SQLite n'en accepte pas plus.
+        for column in [
+            string_null("password_hash"),
+            string_null("display_name"),
+            boolean("active").default(true).to_owned(),
+        ] {
+            manager
+                .alter_table(
+                    Table::alter()
+                        .table(Alias::new("users"))
+                        .add_column(column)
+                        .to_owned(),
+                )
+                .await?;
+        }
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("roles"))
+                    .col(string("name").primary_key())
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("user_roles"))
+                    .col(big_integer("user_id"))
+                    .col(string("role"))
+                    .primary_key(
+                        Index::create()
+                            .col(Alias::new("user_id"))
+                            .col(Alias::new("role")),
+                    )
+                    .foreign_key(&mut cascade("user_roles", "user_id", "users", "id"))
+                    .foreign_key(&mut cascade("user_roles", "role", "roles", "name"))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("refresh_tokens"))
+                    .col(big_pk_auto("id"))
+                    .col(big_integer("user_id"))
+                    .col(string("token_hash").unique_key())
+                    .col(timestamp_with_time_zone("expires_at"))
+                    .col(timestamp_with_time_zone("created_at"))
+                    .foreign_key(&mut cascade("refresh_tokens", "user_id", "users", "id"))
+                    .to_owned(),
+            )
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        for name in ["refresh_tokens", "user_roles", "roles"] {
+            manager
+                .drop_table(Table::drop().table(Alias::new(name)).to_owned())
+                .await?;
+        }
+        for column in ["active", "display_name", "password_hash"] {
+            manager
+                .alter_table(
+                    Table::alter()
+                        .table(Alias::new("users"))
+                        .drop_column(Alias::new(column))
+                        .to_owned(),
+                )
                 .await?;
         }
         Ok(())

@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use axum::Router;
+use axum::{Router, middleware};
 use forge_schema::Model;
 use sea_orm::DatabaseConnection;
 
+use crate::auth::{self, AuthConfig};
 use crate::error::Error;
 use crate::hooks::Hooks;
 use crate::parameters;
@@ -17,6 +18,7 @@ use crate::resource::{self, ForgeEntity};
 pub struct AppState {
     pub(crate) db: DatabaseConnection,
     pub(crate) model: Arc<Model>,
+    pub(crate) auth: Arc<AuthConfig>,
 }
 
 impl AppState {
@@ -49,7 +51,7 @@ impl App {
         Ok(Self {
             model: Arc::new(Model::from_json(schema)?),
             tables: BTreeSet::new(),
-            router: parameters::router(),
+            router: parameters::router().merge(auth::router()),
         })
     }
 
@@ -74,11 +76,16 @@ impl App {
         self
     }
 
-    /// Prépare la base (paramètres) et retourne le routeur prêt à servir.
+    /// Prépare la base (paramètres, rôles, compte administrateur initial) et
+    /// retourne le routeur prêt à servir, authentification comprise.
     ///
     /// Échoue si une table du schéma n'a pas de ressource : le code généré est
     /// alors en retard sur `forge.json`.
-    pub async fn into_router(self, db: DatabaseConnection) -> Result<Router, Error> {
+    pub async fn into_router(
+        self,
+        db: DatabaseConnection,
+        auth: AuthConfig,
+    ) -> Result<Router, Error> {
         let missing: Vec<_> = self
             .model
             .tables()
@@ -93,9 +100,19 @@ impl App {
             )));
         }
         parameters::seed(&db, &self.model.spec().parameters).await?;
-        Ok(self.router.with_state(AppState {
+        auth::users::seed_roles(&db, &self.model.spec().roles).await?;
+        auth::users::ensure_initial_admin(&db, auth.initial_admin.as_ref()).await?;
+        let state = AppState {
             db,
             model: self.model,
-        }))
+            auth: Arc::new(auth),
+        };
+        Ok(self
+            .router
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::authenticate,
+            ))
+            .with_state(state))
     }
 }

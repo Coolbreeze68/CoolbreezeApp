@@ -65,8 +65,8 @@ jobs:
         run: ./scripts/e2e-evolution.sh
         env:
           DATABASE_URL: ${{ matrix.url }}
-      - name: Migrations incrémentales (runtime)
-        run: cargo test -p forge-runtime --test migration
+      - name: Migrations et authentification (runtime)
+        run: cargo test -p forge-runtime --all-features --test migration --test auth
         env:
           TEST_DATABASE_URL: ${{ matrix.url }}
       - name: CRUD du CRM

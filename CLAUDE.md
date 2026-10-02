@@ -41,7 +41,7 @@ l'environnement cloud) ; la CI teste PostgreSQL 16 et MySQL 8.4.
 | `forge-formula` | Langage de formules : `lexer` → `parser` → `ast`. `FunctionRegistry` liste les signatures (arité, agrégat, volatile). Aucune connaissance du schéma. |
 | `forge-schema` | `spec` : types serde du `forge.json` (source du JSON Schema, `deny_unknown_fields`). `validate` : validation sémantique produisant un `Model` (relations résolues, AST des formules et conditions, ordre topologique des colonnes calculées). `value` : conversion JSON/texte → `TypedValue`, partagée par la validation et le runtime. `graph` : tri et cycles. `names` : identifiants et mots réservés. |
 | `forge-codegen` | `layout` : structure de stockage (ce que les migrations créent), comparée à `.forge/snapshot.json`. `diff` : changements entre deux layouts, leur risque (`Safe`/`MayFail`/`DataLoss`) et `Hints` (renommages, défauts tirés du schéma). `migration` : rendu des opérations `Plan` (montée = diff, descente = diff inverse). `backend` : vues des templates. `render` : minijinja + `rustfmt` (si présent). `writer` : politiques `Generated` (réécrit, obsolètes supprimés) / `Once` (jamais écrasé). |
-| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `resource` : CRUD générique sur `ForgeEntity`. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : base de test, `TestClient`, `check_resources`. |
+| `forge-runtime` | `app` : `App` (assemblage) et `AppState`. `auth` : `AuthConfig`, jetons, `CurrentUser` (extracteur), middleware, `/api/auth/*` ; `auth::users` : comptes (admin), rôles, admin initial. `rules` : portée d'une action (`Scope`), conditions `when` → SQL. `resource` : CRUD générique sur `ForgeEntity`. `payload` : validation des corps. `query` : pagination/tri/filtres. `links` : tables de jointure. `hooks` : trait `Hooks<E>`. `parameters`. `migration` : `Plan`/`TableDef` (exécution des migrations par base) + migrations système. `cli` : binaire généré. `testing` (feature) : `TestDatabase` (verrou sur base partagée), `TestClient` (connecté en admin, `as_new_user`, `anonymous`), `check_resources`, `check_rules`. |
 | `forge-cli` | Binaire `forge` : `new`, `generate`, `migrate`, `validate`, `schema`. |
 
 Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
@@ -76,6 +76,23 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Contraintes nommées d'après la colonne : `fk_<table>_<colonne>`, index unique
   `uq_<table>_<colonne>` (jamais d'unicité en ligne : il faut pouvoir la supprimer).
   Renommer une telle colonne supprime puis recrée la contrainte sous le nouveau nom.
+
+### Authentification et règles
+
+- Middleware sur `/api/` (sauf `login` et `refresh`) : jeton d'accès JWT HS256 lu
+  dans `Authorization: Bearer`, `CurrentUser` placé dans les extensions de la requête.
+  Les rôles viennent du jeton (rechargés au rafraîchissement).
+- Jeton de rafraîchissement : 32 octets aléatoires, stocké en SHA-256, rotation à
+  chaque usage. Mots de passe : argon2id (optimisé même en debug, voir `Cargo.toml`).
+- Migration système `forge_0002_auth` : colonnes de `users`, tables `roles`,
+  `user_roles`, `refresh_tokens`. Rôles du schéma et admin initial créés par
+  `App::into_router`.
+- `admin` a tous les droits. Sinon `rules::scope` retourne `Scope::All`,
+  `Scope::Where(condition SQL)` ou `403`. Lecture hors périmètre → `404` ;
+  update/delete vérifient la condition avant (et après pour update) ; create après
+  insertion, dans la transaction. `owner` = créateur.
+- Calculer les portées **avant** d'ouvrir une transaction : elles lisent la base
+  (paramètres) via le pool, qui n'a qu'une connexion en SQLite de test.
 
 ### Migrations
 
@@ -118,8 +135,10 @@ Templates : `templates/backend/*.j2`, embarqués via `include_str!` (liste dans
 - Conditions `when` : uniquement colonnes stockées de la table, `$user.id|email`,
   `$param.*`, littéraux et opérateurs, sans fonctions, pour rester traduisibles en SQL.
 - Le schéma du CRM est `examples/crm/forge.json` (le projet de référence est versionné).
-- `owner` reste `NULL` jusqu'à l'auth (phase 3) ; formules non persistées et lookups
-  absents des réponses, formules persistées à `NULL` (phase 4).
+- Formules non persistées et lookups absents des réponses, formules persistées à
+  `NULL` (phase 4).
+- Tests sur PostgreSQL/MySQL : base partagée, tests d'un binaire sérialisés par le
+  verrou de `TestDatabase`.
 - Migrations : `DataLoss` refusé sans `--allow-destructive` (`Error::Destructive`, rien
   n'est écrit) ; `MayFail` signalé (avertissement + en-tête de migration). Renommage de
   table non géré (suppression + création). MySQL n'exécute pas les migrations en
