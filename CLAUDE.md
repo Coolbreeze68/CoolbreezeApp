@@ -299,4 +299,9 @@ Templates : `templates/{backend,flutter,web,infra}/*.j2`, embarqués via
   web, comme Mantine) ; liens ouverts par `url_launcher` côté Flutter. Tests web :
   jsdom n'a pas `document.fonts` (zones de texte extensibles de Mantine) : simulé
   dans `test-setup.ts`.
+- Sélecteurs de date : raccourcis définis une fois par interface et identiques
+  (`datePresets` côté web, `DatePreset` côté Dart) ; web = `DateInput`/
+  `DateTimePicker` de Mantine (`presets`), Flutter = `showForgeDatePicker`
+  (calendrier, heure et raccourcis dans une seule fenêtre). Les filtres gardent
+  leurs sélecteurs d'intervalle.
 - Hors périmètre v1 : temps réel, multi-tenant, workflows.

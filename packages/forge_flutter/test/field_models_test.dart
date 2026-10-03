@@ -32,6 +32,8 @@ const models = AppSchema(
         ColumnSchema('description', ColumnType.markdown),
         ColumnSchema('contrat', ColumnType.file, maxSize: 1),
         ColumnSchema('societe', ColumnType.reference, target: 'societe'),
+        ColumnSchema('echeance', ColumnType.date),
+        ColumnSchema('rdv', ColumnType.datetime),
       ],
     ),
     TableSchema(
@@ -65,6 +67,8 @@ final fiche = {
     'url': '/api/files/0b9f3c1e?expires=1&signature=x',
   },
   'societe': null,
+  'echeance': null,
+  'rdv': null,
   'created_at': '2026-10-01T08:00:00Z',
   'updated_at': '2026-10-01T08:00:00Z',
 };
@@ -172,6 +176,57 @@ void main() {
       'note': 3,
       'remise': '0.125',
       'societe': 7,
+    });
+  });
+
+  testWidgets('dates : raccourci, calendrier et heure dans une fenêtre', (
+    tester,
+  ) async {
+    final api = modelsApi();
+    Map<String, Object?>? posted;
+    api.on('POST', '/api/fiche', (request, _) {
+      posted = jsonDecode(request.body) as Map<String, Object?>;
+      return fiche;
+    });
+    await startApp(tester, api: api, appSchema: models);
+    await openTable(tester, 'Fiche');
+    await tester.tap(find.byTooltip('Nouveau'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Nom *'), 'Initech');
+
+    // Date : raccourci « Demain », qui ferme la fenêtre.
+    await tester.ensureVisible(find.text('Echeance'));
+    await tester.tap(find.text('Echeance'));
+    await tester.pumpAndSettle();
+    expect(find.text('Dans une semaine'), findsOneWidget);
+    expect(find.byIcon(Icons.schedule), findsNothing);
+    await tester.tap(find.text('Demain'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+
+    // Date-heure : jour du calendrier, heure proposée (9:00), puis OK.
+    await tester.ensureVisible(find.text('Rdv'));
+    await tester.tap(find.text('Rdv'));
+    await tester.pumpAndSettle();
+    expect(find.text('Demain matin'), findsOneWidget);
+    expect(find.text('09:00'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(CalendarDatePicker),
+        matching: find.text('15'),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Enregistrer'));
+    await tester.pumpAndSettle();
+    final now = DateTime.now();
+    expect(posted, {
+      'nom': 'Initech',
+      'echeance': dateToJson(DatePreset.tomorrow.valueAt(now)),
+      'rdv': dateTimeToJson(DateTime(now.year, now.month, 15, 9)),
     });
   });
 }

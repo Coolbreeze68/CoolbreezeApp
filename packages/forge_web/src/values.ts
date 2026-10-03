@@ -33,6 +33,40 @@ export const dateToJson = (date: Date) =>
 
 export const dateTimeToJson = (date: Date) => date.toISOString();
 
+/** Date-heure locale → `"2026-10-02 09:30:00"` (format des sélecteurs Mantine). */
+export const localDateTimeText = (date: Date) =>
+  `${dateToJson(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+
+/** Raccourci d'un sélecteur de date : intitulé (clé de `ForgeStrings`) et valeur. */
+export interface DatePreset {
+  label: 'today' | 'tomorrow' | 'inOneWeek' | 'now' | 'inOneHour' | 'tomorrowMorning';
+  date: Date;
+}
+
+/** Heure posée par les raccourcis « matin ». */
+const MORNING_HOUR = 9;
+
+/** Raccourcis proposés par les sélecteurs de date (`withTime` : date-heure), à
+ * partir de `now`. Les mêmes que dans `forge_flutter`. */
+export function datePresets(withTime: boolean, now: Date = new Date()): DatePreset[] {
+  const day = (offset: number, hour = 0) =>
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, hour);
+  if (!withTime) {
+    return [
+      { label: 'today', date: day(0) },
+      { label: 'tomorrow', date: day(1) },
+      { label: 'inOneWeek', date: day(7) },
+    ];
+  }
+  const minute = new Date(now);
+  minute.setSeconds(0, 0);
+  return [
+    { label: 'now', date: minute },
+    { label: 'inOneHour', date: new Date(minute.getTime() + 3_600_000) },
+    { label: 'tomorrowMorning', date: day(1, MORNING_HOUR) },
+  ];
+}
+
 /** Décimal saisi par l'utilisateur (`1 234,5` ou `1234.5`) → texte de l'API, ou `null`. */
 export function parseDecimalInput(input: string): string | null {
   const normalized = input.replace(/[\s\u00a0\u202f]/g, '').replace(',', '.');

@@ -12,6 +12,12 @@ export interface ForgeStrings {
   remove: string;
   uploading: string;
   fileTooLarge: (megabytes: number) => string;
+  /** Raccourcis des sélecteurs de date (`today` sert aussi). */
+  tomorrow: string;
+  inOneWeek: string;
+  now: string;
+  inOneHour: string;
+  tomorrowMorning: string;
   account: string;
   actions: string;
   active: string;
@@ -116,6 +122,11 @@ export const fr: ForgeStrings = {
   remove: 'Retirer',
   uploading: 'Envoi…',
   fileTooLarge: (megabytes) => `Fichier trop volumineux (${megabytes} Mo au maximum)`,
+  tomorrow: 'Demain',
+  inOneWeek: 'Dans une semaine',
+  now: 'Maintenant',
+  inOneHour: 'Dans une heure',
+  tomorrowMorning: 'Demain matin',
   account: 'Mon compte',
   actions: 'Actions',
   active: 'Actif',
@@ -220,6 +231,11 @@ export const en: ForgeStrings = {
   remove: 'Remove',
   uploading: 'Uploading…',
   fileTooLarge: (megabytes) => `File too large (${megabytes} MB maximum)`,
+  tomorrow: 'Tomorrow',
+  inOneWeek: 'In one week',
+  now: 'Now',
+  inOneHour: 'In one hour',
+  tomorrowMorning: 'Tomorrow morning',
   account: 'My account',
   actions: 'Actions',
   active: 'Active',

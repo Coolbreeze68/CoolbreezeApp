@@ -35,6 +35,55 @@ Decimal? jsonToDecimal(Object? json) => switch (json) {
   _ => null,
 };
 
+/// Raccourci d'un sélecteur de date : les mêmes que dans `@forge/web`.
+enum DatePreset {
+  today,
+  tomorrow,
+  inOneWeek,
+  now,
+  inOneHour,
+  tomorrowMorning;
+
+  /// Raccourcis d'une date, ou d'une date-heure (`withTime`).
+  static List<DatePreset> of({required bool withTime}) => withTime
+      ? const [now, inOneHour, tomorrowMorning]
+      : const [today, tomorrow, inOneWeek];
+
+  /// Heure posée par les raccourcis « matin ».
+  static const morningHour = 9;
+
+  /// Valeur du raccourci à l'instant `reference` (date à minuit, ou date-heure
+  /// à la minute).
+  DateTime valueAt(DateTime reference) {
+    DateTime day(int offset, [int hour = 0]) =>
+        DateTime(reference.year, reference.month, reference.day + offset, hour);
+    final minute = DateTime(
+      reference.year,
+      reference.month,
+      reference.day,
+      reference.hour,
+      reference.minute,
+    );
+    return switch (this) {
+      today => day(0),
+      tomorrow => day(1),
+      inOneWeek => day(7),
+      now => minute,
+      inOneHour => minute.add(const Duration(hours: 1)),
+      tomorrowMorning => day(1, morningHour),
+    };
+  }
+
+  String label(ForgeStrings strings) => switch (this) {
+    today => strings.today,
+    tomorrow => strings.tomorrow,
+    inOneWeek => strings.inOneWeek,
+    now => strings.now,
+    inOneHour => strings.inOneHour,
+    tomorrowMorning => strings.tomorrowMorning,
+  };
+}
+
 List<int> jsonToIds(Object? json) => [
   if (json is List)
     for (final id in json)

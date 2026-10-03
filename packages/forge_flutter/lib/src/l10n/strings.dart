@@ -16,6 +16,11 @@ class ForgeStrings {
     required this.uploading,
     required this.chooseColor,
     required this.fileTooLarge,
+    required this.tomorrow,
+    required this.inOneWeek,
+    required this.now,
+    required this.inOneHour,
+    required this.tomorrowMorning,
     required this.welcome,
     required this.dashboard,
     required this.account,
@@ -223,6 +228,13 @@ class ForgeStrings {
 
   /// Fichier refusé avant envoi.
   final String Function(int megabytes) fileTooLarge;
+
+  /// Raccourcis des sélecteurs de date (`today` sert aussi).
+  final String tomorrow;
+  final String inOneWeek;
+  final String now;
+  final String inOneHour;
+  final String tomorrowMorning;
 }
 
 const fr = ForgeStrings(
@@ -237,6 +249,11 @@ const fr = ForgeStrings(
   uploading: 'Envoi…',
   chooseColor: 'Choisir une couleur',
   fileTooLarge: _frFileTooLarge,
+  tomorrow: 'Demain',
+  inOneWeek: 'Dans une semaine',
+  now: 'Maintenant',
+  inOneHour: 'Dans une heure',
+  tomorrowMorning: 'Demain matin',
   records: 'Enregistrements',
   welcome: 'Bonjour',
   dashboard: 'Tableau de bord',
@@ -351,6 +368,11 @@ const en = ForgeStrings(
   uploading: 'Uploading…',
   chooseColor: 'Choose a color',
   fileTooLarge: _enFileTooLarge,
+  tomorrow: 'Tomorrow',
+  inOneWeek: 'In one week',
+  now: 'Now',
+  inOneHour: 'In one hour',
+  tomorrowMorning: 'Tomorrow morning',
   records: 'Records',
   welcome: 'Hello',
   dashboard: 'Dashboard',

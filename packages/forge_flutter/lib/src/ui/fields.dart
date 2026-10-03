@@ -10,6 +10,7 @@ import '../customization.dart';
 import '../forge.dart';
 import '../schema.dart';
 import '../values.dart';
+import 'date_picker.dart';
 import 'field_models.dart';
 import 'reference_picker.dart';
 import 'widgets.dart';
@@ -191,27 +192,15 @@ class _DateField extends StatelessWidget {
   bool get _withTime => field.column.type == ColumnType.datetime;
 
   Future<void> _pick(BuildContext context) async {
-    final current = _withTime
-        ? jsonToDateTime(field.value)
-        : jsonToDate(field.value);
-    final date = await showDatePicker(
-      context: context,
-      initialDate: current ?? DateTime.now(),
-      firstDate: DateTime(1900),
-      lastDate: DateTime(2200),
+    final picked = await showForgeDatePicker(
+      context,
+      initial: _withTime
+          ? jsonToDateTime(field.value)
+          : jsonToDate(field.value),
+      withTime: _withTime,
     );
-    if (date == null || !context.mounted) return;
-    if (!_withTime) return field.onChanged(dateToJson(date));
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(current ?? DateTime(0, 1, 1, 9)),
-    );
-    if (time == null) return;
-    field.onChanged(
-      dateTimeToJson(
-        DateTime(date.year, date.month, date.day, time.hour, time.minute),
-      ),
-    );
+    if (picked == null) return;
+    field.onChanged(_withTime ? dateTimeToJson(picked) : dateToJson(picked));
   }
 
   @override
@@ -224,8 +213,9 @@ class _DateField extends StatelessWidget {
       onTap: () => _pick(context),
       child: InputDecorator(
         decoration: _decoration(context, field).copyWith(
+          prefixIcon: Icon(_withTime ? Icons.edit_calendar : Icons.event),
           suffixIcon: value == null
-              ? const Icon(Icons.event)
+              ? null
               : IconButton(
                   tooltip: Forge.of(context).strings.clear,
                   icon: const Icon(Icons.clear),

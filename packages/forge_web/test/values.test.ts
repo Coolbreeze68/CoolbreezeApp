@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { allows, fr, en, findTable, queryParameters, relatedLists, ValueFormat, withFilters } from '../src';
-import { dateToJson, jsonToDate, parseDecimalInput, parseIntegerInput } from '../src';
+import { datePresets, dateToJson, jsonToDate, localDateTimeText, parseDecimalInput, parseIntegerInput } from '../src';
 import { schema } from './support';
 
 const opportunites = findTable(schema, 'opportunite')!;
@@ -58,5 +58,25 @@ describe('schéma et requêtes', () => {
       'montant[gte]': '1000',
     });
     expect(queryParameters(query, false)).not.toHaveProperty('page');
+  });
+});
+
+describe('datePresets', () => {
+  const now = new Date(2026, 9, 31, 14, 27, 45);
+
+  it('propose aujourd’hui, demain et dans une semaine pour une date', () => {
+    expect(datePresets(false, now).map((p) => [p.label, dateToJson(p.date)])).toEqual([
+      ['today', '2026-10-31'],
+      ['tomorrow', '2026-11-01'],
+      ['inOneWeek', '2026-11-07'],
+    ]);
+  });
+
+  it('propose maintenant (à la minute), dans une heure et demain matin', () => {
+    expect(datePresets(true, now).map((p) => [p.label, localDateTimeText(p.date)])).toEqual([
+      ['now', '2026-10-31 14:27:00'],
+      ['inOneHour', '2026-10-31 15:27:00'],
+      ['tomorrowMorning', '2026-11-01 09:00:00'],
+    ]);
   });
 });

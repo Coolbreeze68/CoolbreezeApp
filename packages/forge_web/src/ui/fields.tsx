@@ -1,6 +1,6 @@
 import { Group, NumberInput, Select, SimpleGrid, Switch, Textarea, TextInput } from '@mantine/core';
 import { DateInput, DateTimePicker } from '@mantine/dates';
-import { IconLink, IconMail, IconPhone } from '@tabler/icons-react';
+import { IconCalendar, IconCalendarClock, IconLink, IconMail, IconPhone } from '@tabler/icons-react';
 
 import type { Json } from '../api/client';
 
@@ -8,10 +8,13 @@ import type { FieldProps } from '../customization';
 import { useForge } from '../context';
 import type { ColumnSchema, TableSchema } from '../schema';
 import {
+  datePresets,
+  dateToJson,
   dateTimeToJson,
   isValidInput,
   jsonToDateTime,
   jsonToIds,
+  localDateTimeText,
   parseDecimalInput,
   parseIntegerInput,
   parsePercentInput,
@@ -108,6 +111,8 @@ export function Field(props: FieldProps) {
           valueFormat={locale.startsWith('fr') ? 'DD/MM/YYYY' : 'MM/DD/YYYY'}
           value={typeof value === 'string' ? value : null}
           onChange={(v) => onChange(v ? String(v).slice(0, 10) : null)}
+          leftSection={<IconCalendar size={16} />}
+          presets={datePresets(false).map((p) => ({ value: dateToJson(p.date), label: strings[p.label] }))}
           clearable
         />
       );
@@ -119,6 +124,8 @@ export function Field(props: FieldProps) {
           valueFormat={locale.startsWith('fr') ? 'DD/MM/YYYY HH:mm' : 'MM/DD/YYYY hh:mm A'}
           value={jsonToDateTime(value)}
           onChange={(v) => onChange(v ? dateTimeToJson(new Date(String(v).replace(' ', 'T'))) : null)}
+          leftSection={<IconCalendarClock size={16} />}
+          presets={datePresets(true).map((p) => ({ value: localDateTimeText(p.date), label: strings[p.label] }))}
           clearable
         />
       );

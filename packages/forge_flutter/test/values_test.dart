@@ -68,4 +68,22 @@ void main() {
     expect(parseIntegerInput('1 000'), 1000);
     expect(parseIntegerInput('1,5'), isNull);
   });
+
+  test('raccourcis de date : mêmes valeurs que côté web', () {
+    final reference = DateTime(2026, 10, 31, 14, 27, 45);
+    String values(bool withTime) => DatePreset.of(
+      withTime: withTime,
+    ).map((p) => '${p.name}=${p.valueAt(reference)}').join(', ');
+    expect(
+      values(false),
+      'today=2026-10-31 00:00:00.000, tomorrow=2026-11-01 00:00:00.000, '
+      'inOneWeek=2026-11-07 00:00:00.000',
+    );
+    expect(
+      values(true),
+      'now=2026-10-31 14:27:00.000, inOneHour=2026-10-31 15:27:00.000, '
+      'tomorrowMorning=2026-11-01 09:00:00.000',
+    );
+    expect(DatePreset.tomorrowMorning.label(fr), 'Demain matin');
+  });
 }

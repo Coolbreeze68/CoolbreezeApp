@@ -20,6 +20,7 @@ export 'src/router.dart' show Paths;
 export 'src/palette.dart';
 export 'src/schema.dart';
 export 'src/theme.dart';
+export 'src/ui/date_picker.dart' show showForgeDatePicker;
 export 'src/ui/field_models.dart'
     show
         ColorValue,

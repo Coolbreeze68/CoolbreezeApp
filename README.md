@@ -344,7 +344,9 @@ thème clair ou sombre :
 - **fiches** : valeurs mises en forme, valeurs d'énumération en pastilles de
   couleur, références cliquables, formules et lookups, et les enregistrements des
   autres tables qui la référencent (« Tout voir », création pré-remplie) ;
-- **formulaires** de création et de modification : un champ par type (dates,
+- **formulaires** de création et de modification : un champ par type (dates et
+  dates-heures avec calendrier, heure et raccourcis « Aujourd'hui », « Demain »,
+  « Dans une semaine » ou « Maintenant », « Dans une heure », « Demain matin »,
   durées `h:mm`, énumérations, références avec recherche, listes de références),
   valeurs par défaut, erreurs de validation du serveur sous chaque champ ; seules
   les colonnes modifiées sont envoyées. Une référence se crée aussi depuis son
