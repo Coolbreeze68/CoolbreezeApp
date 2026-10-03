@@ -42,6 +42,9 @@ class _LoginPageState extends State<LoginPage> {
             ? forge.strings.invalidCredentials
             : errorMessage(context, error),
       );
+    } catch (error) {
+      // Erreur imprévue : affichée plutôt qu'ignorée.
+      if (mounted) setState(() => _error = errorMessage(context, error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -227,6 +227,9 @@ Templates : `templates/{backend,flutter,infra}/*.j2`, embarqués via
   écriture peut changer des formules d'autres tables.
 - `setState` ne doit jamais recevoir une fonction fléchée qui renvoie un `Future`
   (`setState(() => _x = _load())` lève une assertion) : bloc `{ … }`.
+- Session Flutter : un échec du stockage (`SecureStore` indisponible sur une page
+  web non sécurisée : `http` hors `localhost`) n'empêche jamais la connexion ;
+  la session n'est alors pas reprise au rechargement.
 - CORS : désactivé par défaut, `FORGE_CORS_ORIGINS` (cli du runtime).
 - Déploiement : une image (API + app web servie par `FORGE_STATIC_DIR`, routes
   `/api/` inconnues toujours en JSON) ; PostgreSQL 17 et Redis (profil) dans

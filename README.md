@@ -319,7 +319,10 @@ Une seule application, pilotée par `lib/generated/schema.dart`, sert le web et
 le mobile (menu fixe et tableaux sur grand écran, tiroir et tuiles sur téléphone) :
 
 - **connexion**, session renouvelée automatiquement (jeton de rafraîchissement
-  conservé dans le stockage chiffré du système) ; langue au choix parmi `locales` ;
+  conservé dans le stockage chiffré du système) ; langue au choix parmi `locales`.
+  Sur le web, ce stockage exige HTTPS ou `localhost` : ouverte en `http` par une
+  autre adresse (IP d'un serveur), l'application fonctionne mais il faut se
+  reconnecter à chaque rechargement de la page ;
 - **listes** paginées : recherche, tri par colonne, filtres par type (valeurs
   d'énumération, intervalles de nombres et de dates, référence, texte contenu) ;
 - **fiches** : valeurs mises en forme, références cliquables, formules et lookups,

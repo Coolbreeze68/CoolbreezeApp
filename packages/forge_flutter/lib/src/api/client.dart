@@ -150,7 +150,12 @@ class ForgeClient extends ChangeNotifier {
 
   /// Reprend la session enregistrée, s'il y en a une encore valide.
   Future<bool> restore() async {
-    _refreshToken = await store.read(refreshTokenKey);
+    try {
+      _refreshToken = await store.read(refreshTokenKey);
+    } catch (error) {
+      debugPrint('forge : session enregistrée illisible ($error)');
+      return false;
+    }
     return _refreshToken != null && await _refresh();
   }
 
@@ -303,16 +308,27 @@ class ForgeClient extends ChangeNotifier {
     _accessToken = session['access_token'] as String;
     _refreshToken = session['refresh_token'] as String;
     _user = ForgeUser.fromJson(session['user'] as Json);
-    await store.write(refreshTokenKey, _refreshToken);
     notifyListeners();
+    await _remember(_refreshToken);
     return _user!;
+  }
+
+  /// Enregistre le jeton de rafraîchissement. Un échec (stockage chiffré
+  /// indisponible, par exemple sur une page web en `http` hors `localhost`)
+  /// n'empêche pas la session : elle ne sera simplement pas reprise.
+  Future<void> _remember(String? token) async {
+    try {
+      await store.write(refreshTokenKey, token);
+    } catch (error) {
+      debugPrint('forge : session non enregistrée ($error)');
+    }
   }
 
   Future<void> _close() async {
     final wasSignedIn = signedIn;
     _accessToken = _refreshToken = _user = null;
-    await store.write(refreshTokenKey, null);
     if (wasSignedIn) notifyListeners();
+    await _remember(null);
   }
 
   @override

@@ -171,6 +171,27 @@ void main() {
     });
   });
 
+  test(
+    'stockage indisponible : la session fonctionne sans être retenue',
+    () async {
+      final api = FakeApi();
+      final client = ForgeClient(
+        baseUrl: FakeApi.baseUrl,
+        httpClient: api.httpClient,
+        store: _BrokenStore(),
+      );
+      var notified = 0;
+      client.addListener(() => notified++);
+      expect(await client.restore(), isFalse);
+      final user = await client.signIn('admin@test', 'secret');
+      expect(user.email, 'admin@test');
+      expect(client.signedIn, isTrue);
+      expect(notified, 1);
+      await client.signOut();
+      expect(client.signedIn, isFalse);
+    },
+  );
+
   test('serveur injoignable : erreur réseau', () async {
     final client = ForgeClient(
       baseUrl: Uri.parse('http://127.0.0.1:1'),
@@ -181,4 +202,14 @@ void main() {
       throwsA(isA<ApiException>().having((e) => e.status, 'status', 0)),
     );
   });
+}
+
+/// Stockage qui échoue toujours (page web en `http` hors `localhost`).
+class _BrokenStore implements KeyValueStore {
+  @override
+  Future<String?> read(String key) => Future.error(StateError('indisponible'));
+
+  @override
+  Future<void> write(String key, String? value) =>
+      Future.error(StateError('indisponible'));
 }
