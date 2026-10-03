@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forge_flutter/forge_flutter.dart';
 import 'package:forge_flutter/testing.dart';
+import 'package:forge_flutter/src/ui/shell.dart';
 
 /// Schéma de test, sur le modèle du CRM d'exemple.
 const schema = AppSchema(
@@ -137,3 +138,12 @@ Iterable<Uri> requestsTo(FakeApi api, String method, String path) => api
     .requests
     .where((r) => r.method == method && r.url.path == path)
     .map((r) => r.url);
+
+/// Ouvre une table par son entrée du menu latéral (le libellé figure aussi
+/// sur l'accueil).
+Future<void> openTable(WidgetTester tester, String label) async {
+  await tester.tap(
+    find.descendant(of: find.byType(NavMenu), matching: find.text(label)),
+  );
+  await tester.pumpAndSettle();
+}

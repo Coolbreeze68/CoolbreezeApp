@@ -203,6 +203,9 @@ fn generate(
         flutter_path: relative_path(&project.join("app"), &flutter)
             .display()
             .to_string(),
+        web_path: relative_path(&project.join("web"), &forge_root.join("packages/forge_web"))
+            .display()
+            .to_string(),
         forge_path: relative_path(&project, forge_root).display().to_string(),
         allow_destructive,
     };

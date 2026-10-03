@@ -16,10 +16,19 @@ export 'src/customization.dart';
 export 'src/forge.dart';
 export 'src/l10n/strings.dart';
 export 'src/router.dart' show Paths;
+export 'src/palette.dart';
 export 'src/schema.dart';
+export 'src/theme.dart';
 export 'src/ui/fields.dart' show InvalidInput, buildField;
 export 'src/ui/record_list.dart' show RecordList;
-export 'src/ui/shell.dart' show ForgeScaffold;
+export 'src/ui/shell.dart' show ForgeScaffold, TintedIcon;
+export 'src/ui/stats_view.dart' show GroupBars, StatTile;
 export 'src/ui/widgets.dart'
-    show RecordTitle, ValueView, errorMessage, showError, showMessage;
+    show
+        EnumBadge,
+        RecordTitle,
+        ValueView,
+        errorMessage,
+        showError,
+        showMessage;
 export 'src/values.dart';

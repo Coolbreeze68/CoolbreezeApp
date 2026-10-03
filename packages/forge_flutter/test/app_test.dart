@@ -23,6 +23,9 @@ void main() {
     await tester.enterText(find.byType(TextFormField).at(1), 'secret');
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
+    // Accueil : bienvenue et nombre d'enregistrements par table.
+    expect(find.textContaining('Bonjour'), findsOneWidget);
+    await openTable(tester, 'Entreprise');
     expect(find.text('Acme'), findsOneWidget);
     expect(find.text('Globex'), findsOneWidget);
     // Valeurs mises en forme, colonne calculée comprise.
@@ -32,6 +35,7 @@ void main() {
 
   testWidgets('fiche : valeurs, référence résolue, liste liée', (tester) async {
     final api = await startApp(tester);
+    await openTable(tester, 'Entreprise');
     await tester.tap(find.text('Acme'));
     await tester.pumpAndSettle();
     // Les opportunités de l'entreprise, filtrées sur la référence.
@@ -73,8 +77,7 @@ void main() {
       }
       return opportunite(12, 'Nouveau contrat');
     });
-    await tester.tap(find.text('Opportunité'));
-    await tester.pumpAndSettle();
+    await openTable(tester, 'Opportunité');
     await tester.tap(find.byTooltip('Nouveau'));
     await tester.pumpAndSettle();
 
@@ -133,8 +136,7 @@ void main() {
       patched = jsonDecode(request.body) as Map<String, Object?>;
       return opportunite(10, 'Contrat révisé');
     });
-    await tester.tap(find.text('Opportunité'));
-    await tester.pumpAndSettle();
+    await openTable(tester, 'Opportunité');
     await tester.tap(find.text('Contrat cadre'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Modifier'));
@@ -150,8 +152,7 @@ void main() {
 
   testWidgets('filtre sur une énumération, recherche', (tester) async {
     final api = await startApp(tester);
-    await tester.tap(find.text('Opportunité'));
-    await tester.pumpAndSettle();
+    await openTable(tester, 'Opportunité');
     await tester.tap(find.byTooltip('Filtrer'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Etape').last);
@@ -209,8 +210,7 @@ void main() {
       },
     );
     await startApp(tester, api: api);
-    await tester.tap(find.text('Opportunité'));
-    await tester.pumpAndSettle();
+    await openTable(tester, 'Opportunité');
 
     await tester.tap(find.byIcon(Icons.calendar_month));
     await tester.pumpAndSettle();
@@ -230,8 +230,7 @@ void main() {
     tester,
   ) async {
     await startApp(tester, api: fakeApi(roles: ['lecteur']));
-    await tester.tap(find.text('Opportunité'));
-    await tester.pumpAndSettle();
+    await openTable(tester, 'Opportunité');
     expect(find.byTooltip('Nouveau'), findsNothing);
     expect(find.text('Utilisateurs'), findsNothing);
     expect(find.text('Paramètres'), findsNothing);
@@ -271,6 +270,9 @@ void main() {
     tester,
   ) async {
     await startApp(tester, size: const Size(400, 800));
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await openTable(tester, 'Entreprise');
     expect(find.byType(DataTable), findsNothing);
     expect(find.text('Acme'), findsOneWidget);
 
@@ -306,13 +308,14 @@ void main() {
         pages: [
           CustomPage(
             path: 'tableau',
-            label: const Label.plain('Tableau de bord'),
+            label: const Label.plain('Mon tableau'),
             icon: Icons.dashboard,
-            builder: (context) => const Text('Mon tableau'),
+            builder: (context) => const Text('Contenu perso'),
           ),
         ],
       ),
     );
+    await openTable(tester, 'Entreprise');
     expect(find.text('Industrie lourde'), findsOneWidget);
     await tester.tap(find.text('Acme'));
     await tester.pumpAndSettle();
@@ -320,8 +323,8 @@ void main() {
     await tester.tap(find.byTooltip('Modifier'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('nom-perso')), findsOneWidget);
-    await tester.tap(find.text('Tableau de bord'));
+    await openTable(tester, 'Mon tableau');
     await tester.pumpAndSettle();
-    expect(find.text('Mon tableau'), findsOneWidget);
+    expect(find.text('Contenu perso'), findsOneWidget);
   });
 }

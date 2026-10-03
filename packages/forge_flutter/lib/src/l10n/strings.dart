@@ -4,6 +4,9 @@ library;
 
 class ForgeStrings {
   const ForgeStrings({
+    required this.records,
+    required this.welcome,
+    required this.dashboard,
     required this.account,
     required this.active,
     required this.add,
@@ -86,6 +89,12 @@ class ForgeStrings {
     required this.users,
     required this.yes,
   });
+
+  final String dashboard;
+
+  final String welcome;
+
+  final String records;
 
   /// Textes de `locale`, en anglais si la langue n'est pas fournie.
   factory ForgeStrings.of(String locale) => switch (locale) {
@@ -191,6 +200,9 @@ class ForgeStrings {
 }
 
 const fr = ForgeStrings(
+  records: 'Enregistrements',
+  welcome: 'Bonjour',
+  dashboard: 'Tableau de bord',
   account: 'Mon compte',
   active: 'Actif',
   add: 'Ajouter',
@@ -291,6 +303,9 @@ String _frTimestamps(String created, String updated) =>
     'Créé le $created · modifié le $updated';
 
 const en = ForgeStrings(
+  records: 'Records',
+  welcome: 'Hello',
+  dashboard: 'Dashboard',
   account: 'My account',
   active: 'Active',
   add: 'Add',

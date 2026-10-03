@@ -1,7 +1,8 @@
 //! Génération des applications forge.
 //!
 //! [`generate`] produit les fichiers d'un projet à partir de son schéma validé :
-//! - `backend/src/generated/` et `app/lib/generated/` sont réécrits à chaque fois
+//! - `backend/src/generated/`, `app/lib/generated/` et `web/src/generated/` sont
+//!   réécrits à chaque fois
 //!   (fichiers obsolètes supprimés) ;
 //! - le code utilisateur (`custom/`, points d'entrée, manifestes) n'est créé qu'une fois ;
 //! - une migration n'est créée que si la structure de stockage a changé
@@ -15,16 +16,19 @@ mod dart;
 mod diff;
 mod error;
 mod flutter;
+mod frontend;
 mod infra;
 mod layout;
 mod migration;
 mod render;
+mod web;
 mod writer;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use forge_schema::Model;
+use forge_schema::spec::Frontend;
 
 pub use diff::{Change, Hints, Risk};
 pub use error::Error;
@@ -35,6 +39,7 @@ use crate::backend::Backend;
 use crate::flutter::Flutter;
 use crate::infra::Infra;
 use crate::render::Renderer;
+use crate::web::Web;
 
 /// Fichier d'état : structure de stockage à la dernière migration générée.
 pub const SNAPSHOT: &str = ".forge/snapshot.json";
@@ -46,6 +51,8 @@ pub struct Options {
     pub runtime_path: String,
     /// Chemin du package `forge_flutter`, relatif au dossier `app/` du projet.
     pub flutter_path: String,
+    /// Chemin du package `@forge/web`, relatif au dossier `web/` du projet.
+    pub web_path: String,
     /// Sources de forge (racine du dépôt), relatives au dossier du projet :
     /// contexte de construction de l'image Docker.
     pub forge_path: String,
@@ -113,18 +120,39 @@ pub fn generate(
         migrations: &migrations,
     };
     files.extend(backend.files(&renderer)?);
-    let flutter = Flutter {
-        model,
-        package_path: &options.flutter_path,
-    };
-    files.extend(flutter.files(&renderer)?);
+    let frontends = &model.spec().app.frontend;
+    let mut generated_dirs = backend::GENERATED_DIRS.to_vec();
+    if frontends.has(Frontend::Flutter) {
+        let flutter = Flutter {
+            model,
+            package_path: &options.flutter_path,
+        };
+        files.extend(flutter.files(&renderer)?);
+        generated_dirs.extend(flutter::GENERATED_DIRS);
+    }
+    if frontends.has(Frontend::Web) {
+        let web = Web {
+            model,
+            package_path: &options.web_path,
+        };
+        files.extend(web.files(&renderer)?);
+        generated_dirs.extend(web::GENERATED_DIRS);
+    }
     let infra = Infra {
         app_name: &model.spec().app.name,
         forge_path: &options.forge_path,
+        frontends: frontends.list(),
     };
     files.extend(infra.files(&renderer)?);
-    let generated_dirs = [backend::GENERATED_DIRS, flutter::GENERATED_DIRS].concat();
     writer::write(project, &files, &generated_dirs, &mut report)?;
+    // Interface retirée du schéma : son dossier reste, à supprimer à la main.
+    for (frontend, dir) in [(Frontend::Flutter, "app"), (Frontend::Web, "web")] {
+        if !frontends.has(frontend) && project.join(dir).is_dir() {
+            report.warnings.push(format!(
+                "{dir}/ : cette interface n'est plus dans `app.frontend`, le dossier n'est plus généré"
+            ));
+        }
+    }
 
     report.warnings.extend(check_dependencies(project));
     for table in orphan_hooks(project, model)? {

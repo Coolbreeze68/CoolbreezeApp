@@ -241,8 +241,17 @@ class _RecordTiles extends StatelessWidget {
             .take(2)
             .map((entry) => '${format.columnLabel(entry.$1)} : ${entry.$2}')
             .join(' · ');
+        final title = format.title(table, record);
         return ListTile(
-          title: Text(format.title(table, record)),
+          leading: CircleAvatar(
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+            child: Text(initials(title), style: const TextStyle(fontSize: 14)),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
           subtitle: subtitle.isEmpty ? null : Text(subtitle, maxLines: 1),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _open(context, table, record),

@@ -128,6 +128,22 @@ fn collects_all_errors() {
 // ------------------------------------------------------------ app, rôles, paramètres
 
 #[test]
+fn frontends() {
+    for valid in [json!("web"), json!("flutter"), json!(["flutter", "web"])] {
+        let mut schema = base();
+        schema["app"]["frontend"] = valid;
+        assert_eq!(issues(&schema), Vec::<String>::new());
+    }
+    let mut schema = base();
+    schema["app"]["frontend"] = json!([]);
+    assert_issue(&schema, "app.frontend", "au moins une interface");
+    schema["app"]["frontend"] = json!(["web", "web"]);
+    assert_issue(&schema, "app.frontend[1]", "en double");
+    schema["app"]["frontend"] = json!("angular");
+    assert!(issues(&schema)[0].starts_with("app.frontend"));
+}
+
+#[test]
 fn app_checks() {
     let mut schema = base();
     schema["app"]["default_locale"] = json!("de");

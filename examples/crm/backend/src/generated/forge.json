@@ -1,6 +1,6 @@
 {
   "$schema": "../../forge.schema.json",
-  "app": { "name": "mini_crm", "default_locale": "fr", "locales": ["fr", "en"] },
+  "app": { "name": "mini_crm", "default_locale": "fr", "locales": ["fr", "en"], "frontend": ["flutter", "web"] },
   "roles": ["admin", "commercial", "lecteur"],
   "parameters": [
     { "name": "tva", "type": "decimal", "default": 20, "label": { "fr": "Taux de TVA (%)", "en": "VAT rate (%)" } },

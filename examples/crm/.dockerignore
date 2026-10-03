@@ -1,6 +1,8 @@
 **/target
 **/.dart_tool
 **/build
+**/node_modules
+**/dist
 *.db
 *.db-shm
 *.db-wal

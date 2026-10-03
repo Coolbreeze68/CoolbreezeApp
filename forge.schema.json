@@ -25,6 +25,10 @@
           "description": "Langue par défaut ; doit figurer dans `locales`.",
           "type": "string"
         },
+        "frontend": {
+          "$ref": "#/$defs/Frontends",
+          "description": "Interface(s) générée(s) : `\"flutter\"` (web et mobile, par défaut),\n`\"web\"` (React), ou les deux : `[\"flutter\", \"web\"]`."
+        },
         "locales": {
           "description": "Langues supportées, par exemple `[\"fr\", \"en\"]`.",
           "items": {
@@ -245,6 +249,35 @@
           "type": "string"
         }
       ]
+    },
+    "Frontend": {
+      "description": "Interface utilisateur générée.",
+      "oneOf": [
+        {
+          "const": "flutter",
+          "description": "Application Flutter (`app/`) : web, Android, iOS.",
+          "type": "string"
+        },
+        {
+          "const": "web",
+          "description": "Application web React (`web/`).",
+          "type": "string"
+        }
+      ]
+    },
+    "Frontends": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Frontend"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/Frontend"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Une interface, ou plusieurs."
     },
     "FunctionDecl": {
       "additionalProperties": false,

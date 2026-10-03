@@ -7,6 +7,7 @@ import 'schema.dart';
 import 'ui/account_page.dart';
 import 'ui/detail_page.dart';
 import 'ui/form_page.dart';
+import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/parameters_page.dart';
 import 'ui/shell.dart';
@@ -16,6 +17,7 @@ import 'ui/widgets.dart';
 
 /// Chemins de l'application.
 abstract final class Paths {
+  static const home = '/';
   static const login = '/login';
   static const account = '/account';
   static const parameters = '/settings/parameters';
@@ -38,14 +40,6 @@ abstract final class Paths {
   static String page(String path) => '/pages/$path';
 }
 
-/// Première page accessible : la première table lisible, sinon le compte.
-String homePath(AppSchema schema, List<String> roles) {
-  for (final table in schema.tables) {
-    if (table.allows(roles, Operation.read)) return Paths.table(table.name);
-  }
-  return Paths.account;
-}
-
 GoRouter buildRouter(AppSchema schema, ForgeClient client) => GoRouter(
   refreshListenable: client,
   redirect: (context, state) {
@@ -59,22 +53,16 @@ GoRouter buildRouter(AppSchema schema, ForgeClient client) => GoRouter(
             : {'from': state.uri.toString()},
       ).toString();
     }
-    if (atLogin) {
-      return state.uri.queryParameters['from'] ??
-          homePath(schema, client.user!.roles);
-    }
-    if (state.matchedLocation == '/') {
-      return homePath(schema, client.user!.roles);
-    }
+    if (atLogin) return state.uri.queryParameters['from'] ?? Paths.home;
     return null;
   },
   errorBuilder: (context, state) => const Scaffold(body: NotFound()),
   routes: [
-    GoRoute(path: '/', builder: (_, _) => const SizedBox.shrink()),
     GoRoute(path: Paths.login, builder: (_, _) => const LoginPage()),
     ShellRoute(
       builder: (context, state, child) => AppShell(child: child),
       routes: [
+        GoRoute(path: Paths.home, builder: (_, _) => const HomePage()),
         GoRoute(
           path: '/data/:table',
           builder: (context, state) => _withTable(

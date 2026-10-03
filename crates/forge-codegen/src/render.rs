@@ -138,6 +138,46 @@ const TEMPLATES: &[(&str, &str)] = &[
         "infra/use_forge.sh",
         include_str!("../../../templates/infra/use_forge.sh.j2"),
     ),
+    (
+        "web/app.tsx",
+        include_str!("../../../templates/web/app.tsx.j2"),
+    ),
+    (
+        "web/app_test.tsx",
+        include_str!("../../../templates/web/app_test.tsx.j2"),
+    ),
+    (
+        "web/customization.tsx",
+        include_str!("../../../templates/web/customization.tsx.j2"),
+    ),
+    (
+        "web/gitignore",
+        include_str!("../../../templates/web/gitignore.j2"),
+    ),
+    (
+        "web/index.html",
+        include_str!("../../../templates/web/index.html.j2"),
+    ),
+    (
+        "web/main.tsx",
+        include_str!("../../../templates/web/main.tsx.j2"),
+    ),
+    (
+        "web/package.json",
+        include_str!("../../../templates/web/package.json.j2"),
+    ),
+    (
+        "web/test_setup.ts",
+        include_str!("../../../templates/web/test_setup.ts.j2"),
+    ),
+    (
+        "web/tsconfig.json",
+        include_str!("../../../templates/web/tsconfig.json.j2"),
+    ),
+    (
+        "web/vite.config.ts",
+        include_str!("../../../templates/web/vite.config.ts.j2"),
+    ),
 ];
 
 pub(crate) struct Renderer {

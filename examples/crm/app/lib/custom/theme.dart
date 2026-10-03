@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:forge_flutter/forge_flutter.dart';
 
-/// Couleur dont dérivent les thèmes clair et sombre (Material 3).
-const seedColor = Color(0xFF3F51B5);
+/// Couleur dont dérivent les thèmes clair et sombre (Material 3) ; les
+/// dégradés de l'en-tête et de l'accueil sont dans `ForgeColors`.
+const seedColor = ForgeColors.indigo;
 
-final lightTheme = ThemeData(colorSchemeSeed: seedColor);
+final lightTheme = forgeTheme(seed: seedColor);
 
-final darkTheme = ThemeData(
-  colorSchemeSeed: seedColor,
-  brightness: Brightness.dark,
-);
+final darkTheme = forgeTheme(seed: seedColor, brightness: Brightness.dark);

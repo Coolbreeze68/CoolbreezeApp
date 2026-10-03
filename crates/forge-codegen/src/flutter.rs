@@ -5,14 +5,15 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
+use forge_schema::Model;
 use forge_schema::names::pascal_case;
-use forge_schema::spec::{Action, Column, ColumnType, Label, Table};
-use forge_schema::{ColumnRef, Model};
+use forge_schema::spec::{Column, ColumnType, Label, Table};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::dart::{Expr, call, camel_case, named, pos, quote, raw, statement, string};
 use crate::error::Error;
+use crate::frontend::{operations, shown};
 use crate::render::Renderer;
 use crate::writer::{OutputFile, Policy};
 
@@ -198,25 +199,6 @@ impl Flutter<'_> {
         ])
     }
 
-    /// Colonne dont la valeur est affichée : pour un lookup, la colonne lue
-    /// au bout du chemin (avec sa table).
-    fn effective<'b>(&'b self, table: &'b str, column: &'b Column) -> (&'b str, &'b Column) {
-        let (mut table, mut column) = (table, column);
-        while column.ty == ColumnType::Lookup {
-            let Some(target) = self
-                .model
-                .dependencies(&ColumnRef::new(table, &column.name))
-                .and_then(|deps| deps.first())
-                .and_then(|dep| Some((dep, self.model.column(dep)?)))
-            else {
-                break;
-            };
-            table = &target.0.table;
-            column = target.1;
-        }
-        (table, column)
-    }
-
     // ------------------------------------------------------------ schema.dart
 
     fn schema(&self) -> String {
@@ -291,25 +273,11 @@ impl Flutter<'_> {
                 .rules
                 .iter()
                 .map(|rule| {
-                    let operations: BTreeSet<&str> = rule
-                        .actions
-                        .iter()
-                        .flat_map(|action| match action {
-                            Action::Read => &["read"][..],
-                            Action::Create => &["create"],
-                            Action::Update => &["update"],
-                            Action::Delete => &["delete"],
-                            Action::All => &["read", "create", "update", "delete"],
-                        })
-                        .copied()
-                        .collect();
-                    let order = ["read", "create", "update", "delete"];
                     let mut rule_args = vec![
                         pos(Expr::List(rule.roles.iter().map(|r| string(r)).collect())),
                         pos(Expr::Set(
-                            order
-                                .iter()
-                                .filter(|o| operations.contains(*o))
+                            operations(rule)
+                                .into_iter()
                                 .map(|o| raw(format!("Operation.{o}")))
                                 .collect(),
                         )),
@@ -326,7 +294,7 @@ impl Flutter<'_> {
     }
 
     fn column(&self, table: &str, column: &Column) -> Expr {
-        let (_, shown) = self.effective(table, column);
+        let (_, shown) = shown(self.model, table, column);
         let mut args = vec![pos(string(&column.name)), pos(column_type(shown.ty))];
         args.extend(column.label.as_ref().map(|l| named("label", label(l))));
         let flag = |name: &str, on: bool| on.then(|| named(name, raw("true")));
@@ -484,7 +452,7 @@ impl Flutter<'_> {
     }
 
     fn field(&self, table: &Table, column: &Column, names: &Names) -> Field {
-        let (owner, shown) = self.effective(&table.name, column);
+        let (owner, shown) = shown(self.model, &table.name, column);
         let dart = Names::field(&column.name);
         let key = format!("json[{}]", quote(&column.name));
         // Une liste vide remplace `null` ; une colonne requise saisie n'est jamais nulle.
@@ -546,7 +514,7 @@ impl Flutter<'_> {
     fn sample(&self, table: &Table) -> Expr {
         let mut entries = vec![(string("id"), raw("1"))];
         for column in &table.columns {
-            let (_, shown) = self.effective(&table.name, column);
+            let (_, shown) = shown(self.model, &table.name, column);
             let value = match shown.ty {
                 ColumnType::String | ColumnType::Text => string("texte"),
                 ColumnType::Integer | ColumnType::Reference => raw("2"),

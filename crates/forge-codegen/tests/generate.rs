@@ -13,6 +13,7 @@ fn options() -> Options {
     Options {
         runtime_path: "../../../crates/forge-runtime".into(),
         flutter_path: "../../../packages/forge_flutter".into(),
+        web_path: "../../../packages/forge_web".into(),
         forge_path: "../..".into(),
         allow_destructive: false,
     }
@@ -45,7 +46,9 @@ fn copy_project(from: &Path, to: &Path) {
     for entry in fs::read_dir(from).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap();
-        if name == "target" || name == ".dart_tool" || name == "build" {
+        if ["target", ".dart_tool", "build", "node_modules", "dist"]
+            .contains(&name.to_str().unwrap())
+        {
             continue;
         }
         let dest = to.join(name);

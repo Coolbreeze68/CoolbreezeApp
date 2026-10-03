@@ -25,25 +25,21 @@ class EntrepriseSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final forge = Forge.of(context);
     final french = forge.locale == 'fr';
-    return Card(
-      child: FutureBuilder(
-        future: _won(forge.client),
-        builder: (context, snapshot) {
-          final won = snapshot.data;
-          if (won == null) return const SizedBox.shrink();
-          final total = won.fold(Decimal.zero, (sum, o) => sum + o.montant);
-          final amount = forge.format.number(total.toDouble());
-          return ListTile(
-            leading: const Icon(Icons.emoji_events_outlined),
-            title: Text(
-              french
-                  ? '${won.length} opportunité(s) gagnée(s)'
-                  : '${won.length} won opportunity(ies)',
-            ),
-            subtitle: Text(french ? 'Montant HT : $amount' : 'Amount: $amount'),
-          );
-        },
-      ),
+    return FutureBuilder(
+      future: _won(forge.client),
+      builder: (context, snapshot) {
+        final won = snapshot.data;
+        if (won == null) return const SizedBox.shrink();
+        final total = won.fold(Decimal.zero, (sum, o) => sum + o.montant);
+        final amount = forge.format.number(total.toDouble());
+        return StatTile(
+          label: french ? 'Opportunités gagnées' : 'Won opportunities',
+          value: '${won.length}',
+          details: french ? 'Montant HT : $amount' : 'Amount: $amount',
+          icon: Icons.emoji_events_outlined,
+          gradient: const [Color(0xFFFAB005), Color(0xFFFD7E14)],
+        );
+      },
     );
   }
 }

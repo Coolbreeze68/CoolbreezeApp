@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use forge_schema::spec::Frontend;
+
 use crate::error::Error;
 use crate::render::Renderer;
 use crate::writer::{OutputFile, Policy};
@@ -11,6 +13,9 @@ pub(crate) struct Infra<'a> {
     pub app_name: &'a str,
     /// Sources de forge, relatives au dossier du projet.
     pub forge_path: &'a str,
+    /// Interfaces générées ; l'image sert l'application web React si elle
+    /// existe, sinon la version web de l'application Flutter.
+    pub frontends: &'a [Frontend],
 }
 
 impl Infra<'_> {
@@ -19,6 +24,8 @@ impl Infra<'_> {
             "app_name": self.app_name,
             "crate_name": self.app_name,
             "forge_path": self.forge_path,
+            "flutter": self.frontends.contains(&Frontend::Flutter),
+            "web": self.frontends.contains(&Frontend::Web),
         });
         [
             ("Dockerfile", "infra/dockerfile"),

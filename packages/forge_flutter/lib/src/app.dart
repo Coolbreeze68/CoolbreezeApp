@@ -9,6 +9,7 @@ import 'forge.dart';
 import 'l10n/strings.dart';
 import 'router.dart';
 import 'schema.dart';
+import 'theme.dart';
 import 'values.dart';
 
 const _apiUrl = String.fromEnvironment('FORGE_API_URL');
@@ -109,16 +110,9 @@ class _ForgeAppState extends State<ForgeApp> {
   @override
   Widget build(BuildContext context) {
     final custom = widget.customization;
-    final theme =
-        custom.theme ??
-        ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true);
+    final theme = custom.theme ?? forgeTheme();
     final darkTheme =
-        custom.darkTheme ??
-        ThemeData(
-          colorSchemeSeed: Colors.indigo,
-          brightness: Brightness.dark,
-          useMaterial3: true,
-        );
+        custom.darkTheme ?? forgeTheme(brightness: Brightness.dark);
     if (!_ready) {
       return MaterialApp(
         theme: theme,

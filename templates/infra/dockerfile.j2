@@ -1,18 +1,31 @@
 # syntax=docker/dockerfile:1
-# check=skip=FromPlatformFlagConstDisallowed
-# Image de {{ app_name }} : l'API sert aussi l'application web, sur le port 8080.
+{% if not web %}# check=skip=FromPlatformFlagConstDisallowed
+{% endif %}# Image de {{ app_name }} : l'API sert aussi l'application web, sur le port 8080.
 #
 #   docker compose up --build          (voir docker-compose.yml)
 #   docker build --build-context forge=<sources de forge> -t {{ app_name }} .
 #
-# Le projet dépend des sources de forge (forge-runtime, forge_flutter), passées
+# Le projet dépend des sources de forge (forge-runtime, {% if web %}@forge/web{% else %}forge_flutter{% endif %}), passées
 # comme contexte nommé `forge`.
 
 ARG DEBIAN=trixie
 ARG RUST_VERSION=1
+{%- if not web %}
 ARG FLUTTER_VERSION=3.47.6
+{%- endif %}
 
 # ------------------------------------------------------- application web
+{%- if web %}
+FROM node:22-slim AS web
+COPY --from=forge packages/forge_web/package.json /forge/packages/forge_web/
+COPY --from=forge packages/forge_web/src /forge/packages/forge_web/src
+COPY scripts/use-forge.sh /src/scripts/
+COPY web /src/web
+RUN sh /src/scripts/use-forge.sh /forge
+WORKDIR /src/web
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund && npm run build
+{%- else %}
 # Le SDK Flutter pour Linux n'existe qu'en x86-64 ; le résultat (JavaScript)
 # ne dépend pas de la plateforme.
 FROM --platform=linux/amd64 debian:${DEBIAN}-slim AS web
@@ -24,13 +37,14 @@ RUN curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/st
   | tar -xJ -C /opt \
  && git config --global --add safe.directory /opt/flutter
 ENV PATH=/opt/flutter/bin:$PATH
-COPY --from=forge packages/forge_flutter /forge/packages/forge_flutter
+COPY --from=forge packages/forge_flutter/pubspec.yaml packages/forge_flutter/analysis_options.yaml /forge/packages/forge_flutter/
+COPY --from=forge packages/forge_flutter/lib /forge/packages/forge_flutter/lib
 COPY scripts/use-forge.sh /src/scripts/
 COPY app /src/app
-COPY backend/Cargo.toml /src/backend/
 RUN sh /src/scripts/use-forge.sh /forge
 WORKDIR /src/app
 RUN flutter pub get && flutter build web --release --no-web-resources-cdn
+{%- endif %}
 
 # ------------------------------------------------------------------- API
 FROM rust:${RUST_VERSION}-slim-${DEBIAN} AS api
@@ -38,7 +52,6 @@ COPY --from=forge Cargo.toml Cargo.lock /forge/
 COPY --from=forge crates /forge/crates
 COPY scripts/use-forge.sh /src/scripts/
 COPY backend /src/backend
-COPY app/pubspec.yaml /src/app/
 RUN sh /src/scripts/use-forge.sh /forge
 WORKDIR /src/backend
 # Features supplémentaires, par exemple `forge-runtime/redis`.
@@ -56,7 +69,7 @@ RUN apt-get update \
  && useradd --system --uid 10001 --home-dir /data app \
  && mkdir /data && chown app /data
 COPY --from=api /usr/local/bin/{{ crate_name }} /usr/local/bin/{{ crate_name }}
-COPY --from=web /src/app/build/web /srv/web
+COPY --from=web {% if web %}/src/web/dist{% else %}/src/app/build/web{% endif %} /srv/web
 USER app
 WORKDIR /data
 VOLUME /data

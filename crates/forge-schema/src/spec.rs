@@ -81,6 +81,47 @@ pub struct App {
     pub default_locale: String,
     /// Langues supportées, par exemple `["fr", "en"]`.
     pub locales: Vec<String>,
+    /// Interface(s) générée(s) : `"flutter"` (web et mobile, par défaut),
+    /// `"web"` (React), ou les deux : `["flutter", "web"]`.
+    #[serde(default)]
+    pub frontend: Frontends,
+}
+
+/// Interface utilisateur générée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Frontend {
+    /// Application Flutter (`app/`) : web, Android, iOS.
+    Flutter,
+    /// Application web React (`web/`).
+    Web,
+}
+
+/// Une interface, ou plusieurs.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Frontends {
+    One(Frontend),
+    Many(Vec<Frontend>),
+}
+
+impl Default for Frontends {
+    fn default() -> Self {
+        Self::One(Frontend::Flutter)
+    }
+}
+
+impl Frontends {
+    pub fn list(&self) -> &[Frontend] {
+        match self {
+            Self::One(frontend) => std::slice::from_ref(frontend),
+            Self::Many(list) => list,
+        }
+    }
+
+    pub fn has(&self, frontend: Frontend) -> bool {
+        self.list().contains(&frontend)
+    }
 }
 
 /// Libellé affiché : texte unique ou traduction par langue.

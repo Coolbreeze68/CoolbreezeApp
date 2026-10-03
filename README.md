@@ -4,11 +4,13 @@ Générateur d'applications écrit en Rust. À partir d'un fichier JSON décriva
 tables, forge génère :
 
 - un backend Rust (API REST + GraphQL, auth, règles d'autorisation, CSV, cache, observabilité) ;
-- une application Flutter unique (web + mobile) : listes, détails, formulaires, calendrier, statistiques ;
+- l'interface de votre choix : une application web React, une application Flutter
+  (web, Android, iOS), ou les deux, avec tableau de bord, listes, fiches,
+  formulaires, calendrier et statistiques ;
 - les migrations, les tests, la documentation et la configuration Docker / CI.
 
 Le code généré est fin : l'essentiel de la logique vit dans des bibliothèques
-communes (`forge-runtime`, `forge_flutter`), et le code utilisateur (`custom/`)
+communes (`forge-runtime`, `@forge/web`, `forge_flutter`), et le code utilisateur (`custom/`)
 n'est jamais écrasé par une régénération.
 
 ## État d'avancement
@@ -24,6 +26,7 @@ n'est jamais écrasé par une régénération.
 | 6 | Observabilité (journaux JSON, identifiant de requête, `/metrics`, `/health`), cache des lectures (mémoire ou Redis) invalidé à l'écriture | ✅ |
 | 7 | Application Flutter (web et mobile) : listes, fiches, formulaires, calendrier, statistiques, CSV, comptes ; modèles Dart typés | ✅ |
 | 8 | Image Docker (API et app web), docker-compose (PostgreSQL, Redis en option), GitHub Actions du projet généré | ✅ |
+| 9 | Choix de l'interface (`app.frontend` : web React, Flutter ou les deux), identité visuelle « Material moderne » commune, accueil en tableau de bord | ✅ |
 
 ## Installation
 
@@ -35,8 +38,8 @@ forge --help
 Les projets générés dépendent de `forge-runtime` et de `forge_flutter` par chemin :
 le binaire `forge` pointe vers les sources à partir desquelles il a été compilé
 (options `--runtime-path` et `--flutter-path` pour en choisir d'autres).
-L'application Flutter demande [Flutter](https://docs.flutter.dev/get-started/install)
-3.38 ou plus récent (Dart 3.10).
+L'application web demande [Node.js](https://nodejs.org) 22 ; l'application Flutter,
+[Flutter](https://docs.flutter.dev/get-started/install) 3.38 ou plus récent (Dart 3.10).
 
 ## Commandes
 
@@ -78,7 +81,12 @@ crm/
 ├── .env.example               # secrets à recopier dans .env (créé une fois)
 ├── .github/workflows/ci.yml   # CI du projet (créée une fois)
 ├── scripts/use-forge.sh       # repointe les dépendances vers des sources de forge (Docker, CI)
-├── app/                       # application Flutter (web, Android, iOS)
+├── web/                       # application web React (si `frontend` contient "web")
+│   ├── package.json, vite.config.ts, index.html  # à vous (créés une fois)
+│   ├── src/main.tsx           # à vous (créé une fois)
+│   ├── src/generated/         # NE PAS MODIFIER : schema.ts, models.ts (types), app.tsx, tests
+│   └── src/custom/            # votre code : customization.tsx
+├── app/                       # application Flutter (si `frontend` contient "flutter")
 │   ├── pubspec.yaml           # à vous (créé une fois)
 │   ├── lib/main.dart          # à vous (créé une fois)
 │   ├── lib/generated/         # NE PAS MODIFIER : réécrit à chaque génération
@@ -139,7 +147,7 @@ le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
 | `FORGE_CACHE_TTL` | `60` | Durée de vie des lectures en cache, en secondes ; `0` désactive le cache |
 | `FORGE_CACHE_URL` | — | Cache Redis partagé (`redis://hôte:6379`), feature `redis` ; sinon cache en mémoire |
 | `FORGE_CORS_ORIGINS` | — | Origines autorisées à appeler l'API depuis un navigateur (virgules ; `*` pour toutes) |
-| `FORGE_STATIC_DIR` | — | Application web servie par l'API (dossier de `flutter build web`) |
+| `FORGE_STATIC_DIR` | — | Application web servie par l'API (`web/dist` après `npm run build`, ou `app/build/web` après `flutter build web`) |
 | `RUST_LOG` | `info,sqlx=warn` | Niveau des journaux |
 | `FORGE_LOG_FORMAT` | `text` (debug), `json` (release) | Format des journaux |
 
@@ -307,34 +315,40 @@ métriques, cache) ; `TestClient` offre aussi `graphql(requête, variables)`,
 `request_text` (corps CSV) et `request_headers`. Avec la feature `redis` de
 `forge-runtime` et `TEST_CACHE_URL=redis://…`, les tests utilisent un cache Redis.
 
-### 8. Lancer l'application Flutter
+### 8. Choisir et lancer l'interface
 
-```bash
-cd crm/backend && FORGE_CORS_ORIGINS=http://localhost:5000 cargo run   # API, ouverte à l'app web
-cd crm/app
-flutter run -d chrome --web-port 5000 --dart-define=FORGE_API_URL=http://localhost:8080
+L'interface se choisit dans `forge.json` ; `forge generate` crée le dossier
+correspondant (`web/` ou `app/`) :
+
+```json
+"app": { "name": "crm", "default_locale": "fr", "locales": ["fr", "en"], "frontend": "web" }
 ```
 
-Une seule application, pilotée par `lib/generated/schema.dart`, sert le web et
-le mobile (menu fixe et tableaux sur grand écran, tiroir et tuiles sur téléphone) :
+| `frontend` | Interface générée |
+|---|---|
+| `"flutter"` (défaut) | `app/` : application Flutter, une seule base de code pour le web, Android et iOS |
+| `"web"` | `web/` : application web React + TypeScript (Vite, composants [Mantine](https://mantine.dev)) |
+| `["flutter", "web"]` | les deux (le CRM d'exemple) ; l'image Docker sert l'application web React |
 
-- **connexion**, session renouvelée automatiquement (jeton de rafraîchissement
-  conservé dans le stockage chiffré du système) ; langue au choix parmi `locales`.
-  Sur le web, ce stockage exige HTTPS ou `localhost` : ouverte en `http` par une
-  autre adresse (IP d'un serveur), l'application fonctionne mais il faut se
-  reconnecter à chaque rechargement de la page ;
+Les deux interfaces offrent les mêmes écrans, avec la même identité visuelle
+(indigo et violet, dégradés, couleurs des valeurs d'énumération communes), en
+thème clair ou sombre :
+
+- **connexion**, session renouvelée automatiquement ; langue au choix parmi `locales` ;
+- **tableau de bord** d'accueil : nombre d'enregistrements par table, répartition
+  de chaque vue `stats`, prochaines échéances de chaque vue `calendar` ;
 - **listes** paginées : recherche, tri par colonne, filtres par type (valeurs
   d'énumération, intervalles de nombres et de dates, référence, texte contenu) ;
-- **fiches** : valeurs mises en forme, références cliquables, formules et lookups,
-  et les enregistrements des autres tables qui la référencent (« Tout voir »,
-  création pré-remplie) ;
+- **fiches** : valeurs mises en forme, valeurs d'énumération en pastilles de
+  couleur, références cliquables, formules et lookups, et les enregistrements des
+  autres tables qui la référencent (« Tout voir », création pré-remplie) ;
 - **formulaires** de création et de modification : un champ par type (dates,
   durées `h:mm`, énumérations, références avec recherche, listes de références),
   valeurs par défaut, erreurs de validation du serveur sous chaque champ ; seules
   les colonnes modifiées sont envoyées ;
 - **calendrier** (`views.calendar`) : mois et agenda du jour, création à une date ;
-- **statistiques** (`views.stats`) : totaux, moyennes, extrêmes et barres par groupe,
-  sur les enregistrements filtrés ;
+- **statistiques** (`views.stats`) : totaux, moyennes, extrêmes et barres par groupe
+  (couleur de chaque valeur, ordre de déclaration), sur les enregistrements filtrés ;
 - **export et import CSV** de la liste filtrée ;
 - pour les administrateurs : **paramètres** et **comptes** (rôles, activation) ;
   pour tous : changement de mot de passe.
@@ -343,23 +357,77 @@ Les boutons suivent les règles (`rules`) : une action qu'aucun rôle de
 l'utilisateur ne permet n'est pas proposée ; une condition `when` est vérifiée par
 le serveur. Les colonnes `hidden` n'apparaissent pas dans l'interface.
 
-| Fiche | Statistiques |
+| Tableau de bord (web) | Statistiques (web) |
 |---|---|
-| ![Fiche entreprise](docs/images/fiche.png) | ![Statistiques des opportunités](docs/images/statistiques.png) |
-| **Calendrier** | **Téléphone** |
-| ![Calendrier des opportunités](docs/images/calendrier.png) | ![Liste sur téléphone](docs/images/mobile.png) |
+| ![Tableau de bord](docs/images/web-accueil.png) | ![Statistiques des opportunités](docs/images/web-statistiques.png) |
+| **Fiche (web)** | **Calendrier (web)** |
+| ![Fiche entreprise](docs/images/web-fiche.png) | ![Calendrier des opportunités](docs/images/web-calendrier.png) |
+| **Thème sombre (web)** | **Tableau de bord (Flutter)** |
+| ![Liste en thème sombre](docs/images/web-sombre.png) | ![Tableau de bord Flutter](docs/images/flutter-accueil.png) |
+| **Téléphone (web)** | **Téléphone (Flutter, thème sombre)** |
+| ![Liste sur téléphone](docs/images/web-mobile.png) | ![Accueil Flutter sur téléphone](docs/images/flutter-mobile.png) |
 
-L'adresse de l'API vient de `--dart-define=FORGE_API_URL=…` ; sans elle, l'app web
-appelle l'origine qui la sert (API et app derrière le même domaine, sans CORS).
-`FORGE_CORS_ORIGINS` (origines séparées par des virgules, ou `*`) autorise un
-navigateur à appeler l'API depuis une autre origine. Pour Android et iOS, ajoutez
-une fois les dossiers de plateforme avec `flutter create --platforms=android,ios .`
-dans `app/` (ils vous appartiennent ensuite).
+#### Application web (React)
+
+```bash
+cd crm/backend && cargo run          # API sur le port 8080
+cd crm/web && npm install && npm run dev   # http://localhost:5173
+```
+
+En développement, Vite relaie `/api` vers le backend (`FORGE_API_URL`, défaut
+`http://localhost:8080`) : même origine pour le navigateur, pas de CORS.
+`npm run build` produit `dist/`, que le backend sert lui-même avec
+`FORGE_STATIC_DIR=web/dist` (c'est ce que fait l'image Docker). La session est
+conservée dans le `localStorage` du navigateur.
+
+#### Application Flutter
+
+```bash
+cd crm/backend && FORGE_CORS_ORIGINS=http://localhost:5000 cargo run   # API, ouverte à l'app web
+cd crm/app
+flutter run -d chrome --web-port 5000 --dart-define=FORGE_API_URL=http://localhost:8080
+```
+
+La session est conservée dans le stockage chiffré du système. Sur le web, ce
+stockage exige HTTPS ou `localhost` : ouverte en `http` par une autre adresse
+(IP d'un serveur), l'application fonctionne mais il faut se reconnecter à chaque
+rechargement de la page. L'adresse de l'API vient de
+`--dart-define=FORGE_API_URL=…` ; sans elle, la version web appelle l'origine qui
+la sert. `FORGE_CORS_ORIGINS` (origines séparées par des virgules, ou `*`)
+autorise un navigateur à appeler l'API depuis une autre origine. Pour Android et
+iOS, ajoutez une fois les dossiers de plateforme avec
+`flutter create --platforms=android,ios .` dans `app/` (ils vous appartiennent
+ensuite).
 
 #### Personnaliser l'interface
 
-`lib/custom/customization.dart` n'est jamais réécrit. `ForgeCustomization` y
-déclare les points d'extension ([exemple du CRM](examples/crm/app/lib/custom/customization.dart)) :
+`src/custom/customization.tsx` (web) et `lib/custom/customization.dart` (Flutter)
+ne sont jamais réécrits. `ForgeCustomization` y déclare les mêmes points
+d'extension : thème, icônes des tables, libellés des valeurs d'énumération,
+champs et affichages par colonne, blocs des fiches, pages ajoutées au menu,
+textes. Côté web ([exemple du CRM](examples/crm/web/src/custom/customization.tsx)) :
+
+```tsx
+export const customization: ForgeCustomization = {
+  theme: { primaryColor: 'indigo' },          // thème Mantine
+  tableIcons: { entreprise: IconBuilding },
+  enumLabels: { 'opportunite.etape': { gagne: { fr: 'Gagnée', en: 'Won' } } },
+  fields: { 'tag.couleur': ColorField },      // composants React (FieldProps)
+  cells: { 'tag.couleur': ColorDot },         // composants React (CellProps)
+  detailSections: { entreprise: [EntrepriseSummary] },
+  pages: [{ path: 'accueil', label: 'Accueil', icon: IconHome, component: Accueil }],
+};
+```
+
+`useForge()` donne accès, dans tout composant, au client de l'API, au schéma, à
+l'utilisateur connecté et à la mise en forme des valeurs. `src/generated/models.ts`
+déclare le type de chaque enregistrement (tel que l'API l'envoie) et un client typé :
+
+```ts
+const gagnees = await opportuniteApi(forge.client).listAll({ filters: [equals('etape', 'gagne')] });
+```
+
+Côté Flutter ([exemple du CRM](examples/crm/app/lib/custom/customization.dart)) :
 
 ```dart
 final customization = ForgeCustomization(
@@ -392,16 +460,18 @@ final gagnees = await Opportunite.api(client).list(
 final total = gagnees.items.fold(Decimal.zero, (sum, o) => sum + o.montant);
 ```
 
-#### Tester l'application
+#### Tester l'interface
 
 ```bash
-cd crm/app && flutter test
+cd crm/web && npm test && npm run typecheck   # web
+cd crm/app && flutter test                     # Flutter
 ```
 
-`test/generated_test.dart` ouvre la liste et le formulaire de chaque table, et
-vérifie que chaque modèle relit et réécrit un enregistrement. Pour vos tests,
-`package:forge_flutter/testing.dart` fournit `FakeApi`, une API en mémoire
-(routes déclarées par le test, compte connecté). Le CRM contient aussi un parcours
+Les tests générés ouvrent la liste et le formulaire de chaque table ; côté
+Flutter, ils vérifient aussi que chaque modèle relit et réécrit un
+enregistrement (côté web, `npm run typecheck` contrôle les types). Pour vos
+tests, `@forge/web/testing` et `package:forge_flutter/testing.dart` fournissent
+`FakeApi`, une API en mémoire (routes déclarées par le test, compte connecté). Le CRM contient aussi un parcours
 contre un backend réel, [`test/api_test.dart`](examples/crm/app/test/api_test.dart),
 lancé avec `FORGE_E2E_URL=http://localhost:8080 flutter test test/api_test.dart`.
 
@@ -421,7 +491,7 @@ docker compose --profile redis up --build   # avec le cache Redis (voir .env.exa
 
 | Fichier | Contenu |
 |---|---|
-| `Dockerfile` | trois étapes : `flutter build web` (SDK officiel, version épinglée par `FLUTTER_VERSION`), `cargo build --release` (features en option : `CARGO_FEATURES`), image finale Debian slim, utilisateur non root, données dans `/data` |
+| `Dockerfile` | trois étapes : l'interface web (`npm run build` sur `node:22-slim` si `web` est dans `app.frontend`, sinon `flutter build web`, SDK épinglé par `FLUTTER_VERSION`), `cargo build --release` (features en option : `CARGO_FEATURES`), image finale Debian slim, utilisateur non root, données dans `/data` |
 | `docker-compose.yml` | l'application, PostgreSQL 17 (volume `db`, démarrage attendu), Redis dans le profil `redis` |
 | `.env.example` | secrets et réglages ; `.env` n'est ni versionné ni copié dans l'image |
 
@@ -439,7 +509,8 @@ Le binaire a une sous-commande `health` (`mini_crm health`), utilisée par le
 
 `.github/workflows/ci.yml` (créé une fois) teste à chaque push et pull request :
 le backend (`cargo fmt`, `clippy`, tests sur SQLite puis PostgreSQL),
-l'application (`flutter analyze`, tests, compilation web), puis construit l'image
+chaque interface (web : `tsc`, tests, `npm run build` ; Flutter : `flutter analyze`,
+tests, compilation web), puis construit l'image
 et vérifie qu'elle démarre, sert l'application et accepte une connexion. Aucune
 image n'est publiée. Le workflow récupère les sources de forge depuis le dépôt
 indiqué par la variable `FORGE_REPOSITORY` du dépôt GitHub (`FORGE_REF` pour une
@@ -751,7 +822,7 @@ Exemple complet : [`examples/crm/forge.json`](examples/crm/forge.json).
 
 | Clé | Description |
 |---|---|
-| `app` | `name` (identifiant), `default_locale`, `locales` (ex. `["fr", "en"]`). |
+| `app` | `name` (identifiant), `default_locale`, `locales` (ex. `["fr", "en"]`), `frontend` (`"flutter"` par défaut, `"web"`, ou `["flutter", "web"]`). |
 | `roles` | Rôles utilisateurs. `admin` est obligatoire. |
 | `parameters` | Paramètres globaux typés (`name`, `type`, `default`, `label`), lisibles dans les formules via `$param.nom`. |
 | `functions` | Fonctions de formule implémentées en Rust : `name`, `args` et `returns` (`number`, `text`, `boolean`, `date`, `datetime`, `any`), `volatile` (résultat non déterministe : interdite dans `persist`). |
@@ -858,9 +929,10 @@ crates/
 │                   agrégats, calcul des formules, auth, hooks, cache, observabilité, migrations, CLI
 └── forge-cli/      binaire `forge`
 packages/
-└── forge_flutter/  logique de l'app Flutter : client de l'API (session, erreurs), listes, fiches,
-                    formulaires, filtres, calendrier, statistiques, CSV, comptes, personnalisation
-templates/          templates minijinja (backend/, flutter/, infra/), embarqués dans le binaire
+├── forge_web/      logique de l'app web (React, TypeScript, Mantine) : client de l'API, tableau
+│                   de bord, listes, fiches, formulaires, filtres, calendrier, statistiques, CSV, comptes
+└── forge_flutter/  la même chose pour l'app Flutter
+templates/          templates minijinja (backend/, web/, flutter/, infra/), embarqués dans le binaire
 examples/crm/       projet de référence généré (membre du workspace, testé en CI)
 scripts/            scénario de bout en bout (évolution du schéma)
 ```
@@ -871,10 +943,11 @@ corps, filtres, valeurs par défaut, liens N↔N, paramètres, formules, schéma
 document OpenAPI). Le code généré se limite aux entités sea-orm typées, à la
 migration et au branchement des hooks.
 
-De même, l'application Flutter générée contient la description des tables en Dart
-(`lib/generated/schema.dart`) et les modèles typés ; tous les écrans vivent dans
-`forge_flutter`, qui se met à jour sans régénération. Le code Dart généré est déjà
-formaté comme le produirait `dart format`.
+De même, les interfaces générées contiennent la description des tables
+(`src/generated/schema.ts`, `lib/generated/schema.dart`) et les types des
+enregistrements ; tous les écrans vivent dans `@forge/web` et `forge_flutter`, qui
+se mettent à jour sans régénération. Le code Dart généré est déjà formaté comme le
+produirait `dart format`.
 
 ## Développement
 
@@ -885,6 +958,8 @@ cargo test --all-features                              # inclut le CRUD du CRM s
 TEST_DATABASE_URL=postgres://… cargo test -p mini_crm  # idem sur PostgreSQL ou MySQL
 cargo run -p forge-cli -- schema > forge.schema.json   # après modification de spec.rs
 cargo run -p forge-cli -- generate --dir examples/crm  # après modification des templates ou du codegen
+(cd packages/forge_web && npm ci && npm run lint && npm run typecheck && npm test)
+(cd examples/crm/web && npm ci && npm run typecheck && npm test)   # app web générée du CRM
 (cd packages/forge_flutter && flutter analyze && flutter test)
 (cd examples/crm/app && flutter analyze && flutter test)  # app générée du CRM
 ./scripts/e2e-evolution.sh                             # scénario complet : création, données, évolution, migration

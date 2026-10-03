@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../api/client.dart';
 import '../forge.dart';
+import '../palette.dart';
 import '../router.dart';
 import '../schema.dart';
 import '../values.dart';
@@ -160,6 +161,13 @@ class ValueView extends StatelessWidget {
         ],
       );
     }
+    if (column.type == ColumnType.enumeration && value is String) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        widthFactor: 1,
+        child: EnumBadge(table: table, column: column, value: value),
+      );
+    }
     if (column.type == ColumnType.boolean && value is bool) {
       return Icon(
         value ? Icons.check_box : Icons.check_box_outline_blank,
@@ -192,6 +200,55 @@ class ValueView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Valeur d'énumération : pastille de couleur et libellé (texte neutre).
+class EnumBadge extends StatelessWidget {
+  const EnumBadge({
+    super.key,
+    required this.table,
+    required this.column,
+    required this.value,
+  });
+
+  final TableSchema table;
+  final ColumnSchema column;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = enumColor(column.values, value, theme.brightness);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            Forge.of(context).format.enumLabel(table, column, value),
+            style: theme.textTheme.labelMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Initiales d'un intitulé, pour l'avatar des tuiles.
+String initials(String title) {
+  final words = title.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+  final letters = words.take(2).map((w) => w.characters.first.toUpperCase());
+  return letters.isEmpty ? '#' : letters.join();
 }
 
 /// Navigation entre les pages d'une liste : « 26–50 sur 112 ».

@@ -224,6 +224,15 @@ impl<'a> Validator<'a> {
                 format!("`{}` doit figurer dans `app.locales`", app.default_locale),
             );
         }
+        let frontends = app.frontend.list();
+        if frontends.is_empty() {
+            self.error("app.frontend", "au moins une interface est requise");
+        }
+        for (i, frontend) in frontends.iter().enumerate() {
+            if frontends[..i].contains(frontend) {
+                self.error(format!("app.frontend[{i}]"), "interface en double");
+            }
+        }
     }
 
     fn check_label(&mut self, path: &str, label: Option<&Label>) {

@@ -166,6 +166,39 @@ jobs:
           flutter analyze
           flutter test
 
+  web:
+    name: Web (@forge/web, app web du CRM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: "@forge/web : lint, types, tests"
+        working-directory: packages/forge_web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run typecheck
+          npm test
+      - name: App web du CRM (types, tests générés, compilation)
+        working-directory: examples/crm/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+      - name: "forge new : l'app web générée passe ses tests"
+        run: |
+          cargo build -p forge-cli
+          ./target/debug/forge new "$RUNNER_TEMP/projet" --schema examples/crm/forge.json
+          cd "$RUNNER_TEMP/projet/web"
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+
   docker:
     name: image Docker et docker-compose du CRM
     runs-on: ubuntu-latest
@@ -181,7 +214,7 @@ jobs:
           POSTGRES_PASSWORD: ci
         run: |
           docker compose up -d --build --wait
-          curl -sf http://localhost:8080/ | grep -q flutter_bootstrap.js
+          curl -sf http://localhost:8080/ | grep -q 'id="root"'
           curl -sf -X POST http://localhost:8080/api/auth/login -H 'content-type: application/json' \
             -d '{"email":"admin@ci.test","password":"motdepasse-ci"}' | grep -q access_token
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/inconnu)" = 404
