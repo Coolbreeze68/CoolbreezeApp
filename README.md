@@ -37,7 +37,7 @@ forge --help
 
 Les projets générés dépendent de `forge-runtime` et de `forge_flutter` par chemin :
 le binaire `forge` pointe vers les sources à partir desquelles il a été compilé
-(options `--runtime-path` et `--flutter-path` pour en choisir d'autres).
+(options `--runtime-path`, `--flutter-path` et `--web-path` pour en choisir d'autres).
 L'application web demande [Node.js](https://nodejs.org) 22 ; l'application Flutter,
 [Flutter](https://docs.flutter.dev/get-started/install) 3.38 ou plus récent (Dart 3.10).
 

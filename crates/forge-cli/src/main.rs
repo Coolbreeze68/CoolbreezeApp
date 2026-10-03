@@ -13,17 +13,21 @@ const RUNTIME_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../forge-runtim
 
 /// Emplacement de `forge_flutter` dans les sources de forge, utilisé par défaut.
 const FLUTTER_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/forge_flutter");
+const WEB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/forge_web");
 
 /// Bibliothèques dont dépendent les projets générés (utilisées à la création
-/// de `backend/Cargo.toml` et `app/pubspec.yaml`).
+/// de `backend/Cargo.toml`, `app/pubspec.yaml` et `web/package.json`).
 #[derive(Debug, Args)]
 struct Libraries {
     /// Chemin de la crate `forge-runtime` (par défaut : celle des sources de forge).
-    #[arg(long)]
-    runtime_path: Option<PathBuf>,
+    #[arg(long = "runtime-path")]
+    runtime: Option<PathBuf>,
     /// Chemin du package `forge_flutter` (par défaut : celui des sources de forge).
-    #[arg(long)]
-    flutter_path: Option<PathBuf>,
+    #[arg(long = "flutter-path")]
+    flutter: Option<PathBuf>,
+    /// Chemin du package `@forge/web` (par défaut : celui des sources de forge).
+    #[arg(long = "web-path")]
+    web: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -159,12 +163,17 @@ fn new(dir: &Path, schema: &Path, libraries: &Libraries) -> anyhow::Result<ExitC
     std::fs::copy(schema, dir.join("forge.json")).context("copie du schéma")?;
     let code = generate(dir, libraries, false)?;
     if code == ExitCode::SUCCESS {
-        println!(
-            "\nProjet créé.\n  API :         cd {0}/backend && cargo run\n  \
-             Application : cd {0}/app && flutter run -d chrome \
-             --dart-define=FORGE_API_URL=http://localhost:8080",
-            dir.display()
-        );
+        let shown = dir.display();
+        println!("\nProjet créé.\n  API :           cd {shown}/backend && cargo run");
+        if dir.join("web").is_dir() {
+            println!("  Interface web : cd {shown}/web && npm install && npm run dev");
+        }
+        if dir.join("app").is_dir() {
+            println!(
+                "  Flutter :       cd {shown}/app && flutter run -d chrome \
+                 --dart-define=FORGE_API_URL=http://localhost:8080"
+            );
+        }
     }
     Ok(code)
 }
@@ -182,16 +191,9 @@ fn generate(
         path.canonicalize()
             .with_context(|| format!("{name} introuvable : `{}`", path.display()))
     };
-    let runtime = locate(
-        libraries.runtime_path.as_ref(),
-        RUNTIME_PATH,
-        "forge-runtime",
-    )?;
-    let flutter = locate(
-        libraries.flutter_path.as_ref(),
-        FLUTTER_PATH,
-        "forge_flutter",
-    )?;
+    let runtime = locate(libraries.runtime.as_ref(), RUNTIME_PATH, "forge-runtime")?;
+    let flutter = locate(libraries.flutter.as_ref(), FLUTTER_PATH, "forge_flutter")?;
+    let web = locate(libraries.web.as_ref(), WEB_PATH, "@forge/web")?;
     let project = dir.canonicalize()?;
     // Racine des sources de forge (`crates/forge-runtime` en est à deux niveaux) :
     // contexte de construction de l'image Docker.
@@ -203,7 +205,7 @@ fn generate(
         flutter_path: relative_path(&project.join("app"), &flutter)
             .display()
             .to_string(),
-        web_path: relative_path(&project.join("web"), &forge_root.join("packages/forge_web"))
+        web_path: relative_path(&project.join("web"), &web)
             .display()
             .to_string(),
         forge_path: relative_path(&project, forge_root).display().to_string(),
