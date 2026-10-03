@@ -1,6 +1,6 @@
 import { type ComboboxItem, MultiSelect, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useState } from 'react';
 
 import type { Json } from '../api/client';
 import { useForge } from '../context';
@@ -68,6 +68,7 @@ interface ReferenceSelectProps {
   error?: string;
   required?: boolean;
   placeholder?: string;
+  style?: CSSProperties;
 }
 
 /** Choix d'un enregistrement de `target`, avec recherche. */
@@ -95,6 +96,7 @@ interface ReferenceMultiSelectProps {
   onChange: (ids: number[]) => void;
   label?: string;
   error?: string;
+  style?: CSSProperties;
 }
 
 /** Choix de plusieurs enregistrements de `target`, avec recherche. */

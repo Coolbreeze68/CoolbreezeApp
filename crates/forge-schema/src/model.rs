@@ -4,7 +4,7 @@ use std::fmt;
 use forge_formula::{Expr, FunctionRegistry};
 
 use crate::error::{Issue, SchemaError};
-use crate::spec::{Column, Spec, Table};
+use crate::spec::{Column, ColumnType, Spec, Table};
 use crate::validate;
 
 /// Désigne une colonne : `table.colonne`.
@@ -105,6 +105,24 @@ impl Model {
             .columns
             .iter()
             .find(|c| c.name == column.column)
+    }
+
+    /// Colonne dont la valeur est lue : pour un lookup, la colonne au bout du
+    /// chemin (avec sa table) ; sinon la colonne elle-même.
+    pub fn resolved<'a>(&'a self, table: &'a str, column: &'a Column) -> (&'a str, &'a Column) {
+        let (mut table, mut column) = (table, column);
+        while column.ty == ColumnType::Lookup {
+            let Some((dep, target)) = self
+                .dependencies(&ColumnRef::new(table, &column.name))
+                .and_then(|deps| deps.first())
+                .and_then(|dep| Some((dep, self.column(dep)?)))
+            else {
+                break;
+            };
+            table = &dep.table;
+            column = target;
+        }
+        (table, column)
     }
 
     pub fn relations(&self) -> &[Relation] {

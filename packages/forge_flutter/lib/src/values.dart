@@ -4,6 +4,7 @@ library;
 import 'package:decimal/decimal.dart';
 import 'package:intl/intl.dart';
 
+import 'api/file.dart';
 import 'l10n/strings.dart';
 import 'schema.dart';
 
@@ -80,6 +81,9 @@ class ValueFormat {
   late final _date = DateFormat.yMd(locale);
   late final _dateTime = DateFormat.yMd(locale).add_Hm();
   late final _time = DateFormat.Hm(locale);
+  late final _percent = NumberFormat.percentPattern(locale)
+    ..maximumFractionDigits = 2;
+  final _currencies = <String, NumberFormat>{};
 
   String label(Label? label, String name) =>
       label?.resolve(locale, fallbackLocale) ?? humanize(name);
@@ -104,6 +108,32 @@ class ValueFormat {
 
   String time(DateTime value) => _time.format(value);
 
+  /// Proportion en pourcentage : `0.255` → `25,5 %`.
+  String percent(Decimal value) => _percent.format(value.toDouble());
+
+  /// Montant dans la devise `currency` : `1 500,00 €`.
+  String money(Decimal value, String currency) => _currencies
+      .putIfAbsent(
+        currency,
+        () => NumberFormat.simpleCurrency(locale: locale, name: currency),
+      )
+      .format(value.toDouble());
+
+  /// Taille de fichier : `820 o`, `12 Ko`, `3,4 Mo`.
+  String fileSize(int bytes) {
+    final units = strings.sizeUnits;
+    var size = bytes.toDouble();
+    var unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    final shown = unit == 0 || size >= 10
+        ? _integer.format(size.round())
+        : _decimal.format((size * 10).round() / 10);
+    return '$shown ${units[unit]}';
+  }
+
   /// `1 h 30`, `45 min`, `2 h`.
   String duration(Duration value) {
     final negative = value.isNegative;
@@ -122,8 +152,25 @@ class ValueFormat {
   String format(TableSchema table, ColumnSchema column, Object? json) {
     if (json == null) return '';
     return switch (column.type) {
-      ColumnType.string || ColumnType.text => '$json',
+      ColumnType.string ||
+      ColumnType.text ||
+      ColumnType.color ||
+      ColumnType.email ||
+      ColumnType.url ||
+      ColumnType.phone ||
+      ColumnType.markdown => '$json',
       ColumnType.integer => json is num ? number(json) : '$json',
+      ColumnType.rating => '$json/${column.max}',
+      ColumnType.percent => switch (jsonToDecimal(json)) {
+        final d? => percent(d),
+        null => '$json',
+      },
+      ColumnType.money => switch (jsonToDecimal(json)) {
+        final d? => money(d, column.currency ?? 'EUR'),
+        null => '$json',
+      },
+      ColumnType.file ||
+      ColumnType.image => ForgeFile.fromJson(json)?.name ?? '',
       ColumnType.decimal => switch (jsonToDecimal(json)) {
         final d? => _decimal.format(d.toDouble()),
         null => '$json',
@@ -172,6 +219,27 @@ String? parseDecimalInput(String input) {
       .replaceAll(',', '.');
   return Decimal.tryParse(normalized)?.toString();
 }
+
+/// Pourcentage saisi (`12,5` pour 12,5 %), en proportion au format JSON (`0.125`).
+String? parsePercentInput(String input) {
+  final percent = Decimal.tryParse(parseDecimalInput(input) ?? '');
+  return percent == null
+      ? null
+      : (percent / Decimal.fromInt(100))
+            .toDecimal(scaleOnInfinitePrecision: 10)
+            .toString();
+}
+
+/// Saisie plausible pour une colonne `email`, `url` ou `phone` (le serveur
+/// fait foi ; ce contrôle évite un aller-retour pour une faute évidente).
+bool isValidInput(ColumnType type, String text) => switch (type) {
+  ColumnType.email => RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text),
+  ColumnType.url => RegExp(r'^https?://[^\s/?#]+\S*$').hasMatch(text),
+  ColumnType.phone =>
+    RegExp(r'^\+?[\d\s().-]+$').hasMatch(text) &&
+        RegExp(r'\d').allMatches(text).length >= 6,
+  _ => true,
+};
 
 /// Entier saisi par l'utilisateur, espaces de groupement tolérés.
 int? parseIntegerInput(String input) =>

@@ -5,6 +5,17 @@ library;
 class ForgeStrings {
   const ForgeStrings({
     required this.records,
+    required this.sizeUnits,
+    required this.write,
+    required this.preview,
+    required this.chooseFile,
+    required this.chooseImage,
+    required this.replace,
+    required this.remove,
+    required this.open,
+    required this.uploading,
+    required this.chooseColor,
+    required this.fileTooLarge,
     required this.welcome,
     required this.dashboard,
     required this.account,
@@ -197,9 +208,35 @@ class ForgeStrings {
   final String unexpectedError;
   final String users;
   final String yes;
+
+  /// Unités de taille de fichier, croissantes.
+  final List<String> sizeUnits;
+  final String write;
+  final String preview;
+  final String chooseFile;
+  final String chooseImage;
+  final String replace;
+  final String remove;
+  final String open;
+  final String uploading;
+  final String chooseColor;
+
+  /// Fichier refusé avant envoi.
+  final String Function(int megabytes) fileTooLarge;
 }
 
 const fr = ForgeStrings(
+  sizeUnits: ['o', 'Ko', 'Mo', 'Go'],
+  write: 'Écrire',
+  preview: 'Aperçu',
+  chooseFile: 'Choisir un fichier',
+  chooseImage: 'Choisir une image',
+  replace: 'Remplacer',
+  remove: 'Retirer',
+  open: 'Ouvrir',
+  uploading: 'Envoi…',
+  chooseColor: 'Choisir une couleur',
+  fileTooLarge: _frFileTooLarge,
   records: 'Enregistrements',
   welcome: 'Bonjour',
   dashboard: 'Tableau de bord',
@@ -303,6 +340,17 @@ String _frTimestamps(String created, String updated) =>
     'Créé le $created · modifié le $updated';
 
 const en = ForgeStrings(
+  sizeUnits: ['B', 'KB', 'MB', 'GB'],
+  write: 'Write',
+  preview: 'Preview',
+  chooseFile: 'Choose a file',
+  chooseImage: 'Choose an image',
+  replace: 'Replace',
+  remove: 'Remove',
+  open: 'Open',
+  uploading: 'Uploading…',
+  chooseColor: 'Choose a color',
+  fileTooLarge: _enFileTooLarge,
   records: 'Records',
   welcome: 'Hello',
   dashboard: 'Dashboard',
@@ -404,3 +452,9 @@ String _enRange(int first, int last, int total) => '$first–$last of $total';
 
 String _enTimestamps(String created, String updated) =>
     'Created $created · updated $updated';
+
+String _frFileTooLarge(int megabytes) =>
+    'Fichier trop volumineux ($megabytes Mo au maximum)';
+
+String _enFileTooLarge(int megabytes) =>
+    'File too large ($megabytes MB maximum)';

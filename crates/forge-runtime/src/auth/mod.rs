@@ -22,13 +22,14 @@ use std::time::Duration;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::request::Parts;
-use axum::http::{StatusCode, header};
+use axum::http::{Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use hmac::{Hmac, Mac};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
@@ -39,6 +40,7 @@ use sha2::{Digest, Sha256};
 
 use crate::app::AppState;
 use crate::error::Error;
+use crate::files::FILES_PREFIX;
 use entities::{refresh_token, user};
 
 /// Routes accessibles sans jeton d'accès.
@@ -115,6 +117,25 @@ impl AuthConfig {
             config.initial_admin = Some(InitialAdmin { email, password });
         }
         config
+    }
+
+    /// Signature HMAC-SHA256 de `message` avec le secret des jetons (URL de fichiers).
+    pub(crate) fn sign(&self, message: &str) -> String {
+        URL_SAFE_NO_PAD.encode(self.mac(message).finalize().into_bytes())
+    }
+
+    /// Vérifie une signature produite par [`Self::sign`], en temps constant.
+    pub(crate) fn verify_signature(&self, message: &str, signature: &str) -> bool {
+        URL_SAFE_NO_PAD
+            .decode(signature)
+            .is_ok_and(|bytes| self.mac(message).verify_slice(&bytes).is_ok())
+    }
+
+    fn mac(&self, message: &str) -> Hmac<Sha256> {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.secret)
+            .expect("HMAC accepte une clé de toute longueur");
+        mac.update(message.as_bytes());
+        mac
     }
 
     fn issue_access(&self, user: &CurrentUser) -> Result<String, Error> {
@@ -207,7 +228,9 @@ pub(crate) async fn authenticate(
     next: Next,
 ) -> Result<Response, Error> {
     let path = request.uri().path();
-    if path.starts_with("/api/") && !PUBLIC_PATHS.contains(&path) {
+    // Le contenu d'un fichier se lit par URL signée (voir `crate::files`).
+    let signed = request.method() == Method::GET && path.starts_with(FILES_PREFIX);
+    if path.starts_with("/api/") && !PUBLIC_PATHS.contains(&path) && !signed {
         let token = request
             .headers()
             .get(header::AUTHORIZATION)
@@ -230,7 +253,7 @@ pub(crate) fn router() -> Router<AppState> {
         .merge(users::router())
 }
 
-fn random_bytes() -> [u8; 32] {
+pub(crate) fn random_bytes() -> [u8; 32] {
     let mut bytes = [0; 32];
     OsRng.fill_bytes(&mut bytes);
     bytes

@@ -116,6 +116,7 @@ Future<FakeApi> startApp(
   bool signedIn = true,
   Size size = const Size(1280, 900),
   ForgeCustomization customization = const ForgeCustomization(),
+  AppSchema appSchema = schema,
 }) async {
   api ??= fakeApi();
   tester.view
@@ -124,7 +125,7 @@ Future<FakeApi> startApp(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     ForgeApp(
-      schema: schema,
+      schema: appSchema,
       client: api.client(signedIn: signedIn),
       customization: customization,
     ),

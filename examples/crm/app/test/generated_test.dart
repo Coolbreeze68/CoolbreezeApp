@@ -10,8 +10,12 @@ import 'package:mini_crm_app/generated/models.dart';
 /// Colonnes modifiables de `table`, avec leur valeur dans `json`.
 Map<String, dynamic> writable(String table, Map<String, dynamic> json) => {
   for (final column in schema.table(table)!.columns)
-    if (column.writable) column.name: json[column.name],
+    if (column.writable) column.name: written(column, json[column.name]),
 };
+
+/// Valeur envoyée à l'API : un fichier s'écrit par son identifiant.
+Object? written(ColumnSchema column, Object? value) =>
+    column.type.isFile && value is Map ? value['id'] : value;
 
 void main() {
   testWidgets('chaque table : liste et formulaire de création', (tester) async {
@@ -37,7 +41,16 @@ void main() {
       'secteur': 'industrie',
       'ville': 'texte',
       'site_web': 'texte',
+      'logo': {
+        'id': '0b9f3c1e-5d2a-4c4e-9a8b-1f2e3d4c5b6a',
+        'name': 'fichier.png',
+        'size': 1024,
+        'content_type': 'image/png',
+        'url': '/api/files/0b9f3c1e',
+      },
+      'satisfaction': 2,
       'chiffre_affaires': '1234.5',
+      'presentation': 'texte',
       'pipeline': '1234.5',
       'pipeline_pondere': '1234.5',
       'nb_contacts': 2,
@@ -57,6 +70,13 @@ void main() {
       'nom': 'texte',
       'email': 'texte',
       'telephone': 'texte',
+      'photo': {
+        'id': '0b9f3c1e-5d2a-4c4e-9a8b-1f2e3d4c5b6a',
+        'name': 'fichier.png',
+        'size': 1024,
+        'content_type': 'image/png',
+        'url': '/api/files/0b9f3c1e',
+      },
       'poste': 'texte',
       'entreprise': 2,
       'secteur': 'industrie',
@@ -85,6 +105,13 @@ void main() {
       'date_cloture': '2026-01-02',
       'jours_restants': 2,
       'tags': [2, 3],
+      'devis': {
+        'id': '0b9f3c1e-5d2a-4c4e-9a8b-1f2e3d4c5b6a',
+        'name': 'fichier.png',
+        'size': 1024,
+        'content_type': 'image/png',
+        'url': '/api/files/0b9f3c1e',
+      },
       'notes_internes': 'texte',
       'owner': 1,
       'created_at': '2026-01-02T03:04:05.000Z',

@@ -28,7 +28,7 @@ use crate::hooks::{HookContext, Hooks, Written};
 use crate::payload::{self, Mode, Payload};
 use crate::query::ListQuery;
 use crate::rules::{self, Scope};
-use crate::{compute, links, values};
+use crate::{compute, files, links, values};
 
 /// Taille des lots lus pour un export.
 const EXPORT_CHUNK: u64 = 500;
@@ -210,6 +210,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
         let table = self.table(state);
         normalize_decimals(table, &mut records);
         compute::complete(db, &state.model, &state.functions, table, &mut records).await?;
+        files::expand(db, state, table, &mut records).await?;
         Ok(records)
     }
 
@@ -262,6 +263,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
     ) -> Result<E::Model, Error> {
         let (table, txn) = (self.table(state), ctx.txn);
         let mut record = <E::ActiveModel as ActiveModelTrait>::default();
+        let attached = values.clone();
         assign::<E>(&mut record, values)?;
         stamp::<E>(&mut record, Some(ctx.user.id))?;
         self.hooks.before_create(ctx, &mut record).await?;
@@ -273,6 +275,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
             return Err(out_of_scope(&table.name));
         }
         self.save_links(state, txn, id, links).await?;
+        files::attach(txn, ctx.user, table, id, &attached, ctx.written).await?;
         let changes = compute::neighborhood(txn, &state.model, &table.name, id, false).await?;
         ctx.written.add(&table.name);
         ctx.written
@@ -302,6 +305,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
         let mut changes = compute::neighborhood(txn, &state.model, &table.name, id, false).await?;
 
         let mut record = existing.into_active_model();
+        let attached = values.clone();
         assign::<E>(&mut record, values)?;
         stamp::<E>(&mut record, None)?;
         self.hooks.before_update(ctx, &mut record).await?;
@@ -311,6 +315,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Resource<E, H> {
             return Err(out_of_scope(&table.name));
         }
         self.save_links(state, txn, id, links).await?;
+        files::attach(txn, ctx.user, table, id, &attached, ctx.written).await?;
         changes.merge(compute::neighborhood(txn, &state.model, &table.name, id, false).await?);
         ctx.written.add(&table.name);
         ctx.written
@@ -528,7 +533,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
         let model = self.insert(state, &ctx, &allowed, payload).await?;
         let json = self.one_json(state, &txn, model).await?;
         txn.commit().await?;
-        state.invalidate_written(written).await;
+        state.committed(written).await;
         Ok(json)
     }
 
@@ -550,7 +555,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
             .await?;
         let json = self.one_json(state, &txn, model).await?;
         txn.commit().await?;
-        state.invalidate_written(written).await;
+        state.committed(written).await;
         Ok(json)
     }
 
@@ -569,10 +574,11 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
         // Capturé avant suppression : ce qui référence l'enregistrement va changer.
         let changes = compute::neighborhood(&txn, &state.model, &table.name, id, true).await?;
         E::delete_by_id(id).exec(&txn).await?;
+        files::detach_all(&txn, &table.name, id, &written).await?;
         written.add(&table.name);
         written.extend(compute::propagate(&txn, &state.model, &state.functions, changes).await?);
         txn.commit().await?;
-        state.invalidate_written(written).await;
+        state.committed(written).await;
         Ok(())
     }
 
@@ -607,7 +613,7 @@ impl<E: ForgeEntity, H: Hooks<E>> Service for Resource<E, H> {
             return Err(Error::Import(errors));
         }
         txn.commit().await?;
-        state.invalidate_written(written).await;
+        state.committed(written).await;
         Ok(report)
     }
 }
@@ -618,7 +624,7 @@ fn normalize_decimals(table: &Table, records: &mut [JsonValue]) {
     let decimals: Vec<&str> = table
         .columns
         .iter()
-        .filter(|c| c.is_stored() && c.ty == ColumnType::Decimal)
+        .filter(|c| c.is_stored() && c.ty.base() == ColumnType::Decimal)
         .map(|c| c.name.as_str())
         .collect();
     for record in records {

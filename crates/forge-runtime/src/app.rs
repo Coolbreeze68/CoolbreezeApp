@@ -18,15 +18,18 @@ use serde::de::DeserializeOwned;
 use crate::auth::{self, AuthConfig};
 use crate::cache::{Cache, MemoryCache, Reads};
 use crate::error::Error;
+use crate::files::{DiskStorage, Storage};
 use crate::graphql::{self, Extensions};
 use crate::hooks::{Hooks, Written};
 use crate::resource::{ForgeEntity, Resource, Service};
-use crate::{observability, openapi, parameters, rest};
+use crate::{files, observability, openapi, parameters, rest};
 
 /// Cache par défaut : en mémoire, entrées valables 60 secondes.
 pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(60);
 /// Nombre maximal d'entrées du cache en mémoire par défaut.
 pub const DEFAULT_CACHE_CAPACITY: u64 = 10_000;
+/// Dossier des fichiers téléversés par défaut.
+pub const DEFAULT_UPLOAD_DIR: &str = "uploads";
 
 /// État partagé par tous les handlers, y compris les routes personnalisées.
 #[derive(Debug, Clone)]
@@ -38,6 +41,8 @@ pub struct AppState {
     pub(crate) functions: Arc<FunctionRegistry>,
     /// Cache des lectures, s'il est activé.
     pub(crate) reads: Option<Arc<Reads>>,
+    /// Contenu des fichiers téléversés.
+    pub(crate) storage: Arc<dyn Storage>,
 }
 
 impl AppState {
@@ -77,11 +82,14 @@ impl AppState {
         }
     }
 
-    /// Invalide les tables écrites par une requête, après validation de sa transaction.
-    pub(crate) async fn invalidate_written(&self, written: Written) {
+    /// Applique les effets d'une écriture, après validation de sa transaction :
+    /// invalidation du cache, suppression des fichiers détachés.
+    pub(crate) async fn committed(&self, written: Written) {
+        let (tables, files) = written.into_parts();
         if let Some(reads) = &self.reads {
-            reads.invalidate(written.into_tables()).await;
+            reads.invalidate(tables).await;
         }
+        files::remove(self, &files).await;
     }
 
     /// Table du schéma servie par une ressource enregistrée.
@@ -106,6 +114,7 @@ pub struct App {
     graphql: Extensions,
     functions: FunctionRegistry,
     cache: Option<Arc<dyn Cache>>,
+    storage: Arc<dyn Storage>,
     /// Erreurs d'enregistrement de fonctions, rapportées au démarrage.
     errors: Vec<String>,
 }
@@ -125,6 +134,7 @@ impl App {
                 DEFAULT_CACHE_TTL,
                 DEFAULT_CACHE_CAPACITY,
             ))),
+            storage: Arc::new(DiskStorage::new(DEFAULT_UPLOAD_DIR)),
         })
     }
 
@@ -173,6 +183,14 @@ impl App {
     #[must_use]
     pub fn without_cache(mut self) -> Self {
         self.cache = None;
+        self
+    }
+
+    /// Remplace le stockage des fichiers téléversés (par défaut : sur disque,
+    /// dans [`DEFAULT_UPLOAD_DIR`]).
+    #[must_use]
+    pub fn storage(mut self, storage: impl Storage + 'static) -> Self {
+        self.storage = Arc::new(storage);
         self
     }
 
@@ -250,6 +268,7 @@ impl App {
             .router
             .merge(graphql::router(&self.model, &services, self.graphql)?)
             .merge(openapi::router(&self.model)?)
+            .merge(files::router(&self.model))
             .merge(observability::router());
         for service in services.values() {
             router = router.merge(rest::router(service));
@@ -263,6 +282,7 @@ impl App {
             auth: Arc::new(auth),
             functions: Arc::new(self.functions),
             reads,
+            storage: self.storage,
         };
         let router = router
             .layer(middleware::from_fn_with_state(

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'client.dart';
+import 'file.dart';
 import 'query.dart';
 
 /// Opérations REST sur une table ; `decode` convertit un enregistrement JSON
@@ -51,6 +52,23 @@ class TableClient<T> {
       decode(await client.patch('$_path/$id', values) as Json);
 
   Future<void> delete(int id) => client.delete('$_path/$id');
+
+  /// Téléverse un fichier pour la colonne `file` ou `image` [column] ; son
+  /// `id` s'écrit ensuite dans la colonne.
+  Future<ForgeFile> upload(
+    String column,
+    String name,
+    Uint8List bytes, {
+    String contentType = 'application/octet-stream',
+  }) async {
+    final json = await client.postBytes(
+      '/api/files',
+      bytes,
+      contentType: contentType,
+      query: {'table': table, 'column': column, 'name': name},
+    );
+    return ForgeFile.fromJson(json)!;
+  }
 
   Future<Aggregation> aggregate(
     List<String> fields, {

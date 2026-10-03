@@ -152,7 +152,7 @@ impl ListQuery {
             for column in table
                 .columns
                 .iter()
-                .filter(|c| c.is_stored() && matches!(c.ty, ColumnType::String | ColumnType::Text))
+                .filter(|c| c.is_stored() && is_searchable(c.ty))
             {
                 any = any.add(lower(column_of::<E>(&column.name)).like(pattern.clone()));
             }
@@ -179,7 +179,7 @@ fn parse_filter(table: &Table, key: &str, raw: &str) -> Result<Filter, String> {
         }
         None => (key, Op::Eq),
     };
-    let Queryable { ty, values } =
+    let Queryable { ty, domain } =
         columns::queryable(table, name).ok_or_else(|| format!("filtre impossible sur `{name}`"))?;
 
     let typed = match op {
@@ -188,15 +188,21 @@ fn parse_filter(table: &Table, key: &str, raw: &str) -> Result<Filter, String> {
             "false" => vec![TypedValue::Boolean(false)],
             _ => return Err("`true` ou `false` attendu".into()),
         },
-        Op::Like if !matches!(ty, ColumnType::String | ColumnType::Text | ColumnType::Enum) => {
+        Op::Like
+            if ty.is_file()
+                || !matches!(
+                    ty.base(),
+                    ColumnType::String | ColumnType::Text | ColumnType::Enum
+                ) =>
+        {
             return Err("`like` est réservé aux colonnes texte".into());
         }
         Op::Like => vec![TypedValue::String(raw.to_owned())],
         Op::In => raw
             .split(',')
-            .map(|item| value::from_text(ty, values, item))
+            .map(|item| value::from_text(ty, domain, item))
             .collect::<Result<_, _>>()?,
-        _ => vec![value::from_text(ty, values, raw)?],
+        _ => vec![value::from_text(ty, domain, raw)?],
     };
     Ok(Filter {
         column: name.to_owned(),
@@ -250,6 +256,13 @@ fn like_pattern(text: &str) -> LikeExpr {
         .replace('%', "\\%")
         .replace('_', "\\_");
     LikeExpr::new(format!("%{escaped}%")).escape('\\')
+}
+
+/// Colonne parcourue par la recherche `q` : texte libre (ni couleur ni fichier).
+fn is_searchable(ty: ColumnType) -> bool {
+    matches!(ty.base(), ColumnType::String | ColumnType::Text)
+        && !ty.is_file()
+        && ty != ColumnType::Color
 }
 
 #[cfg(test)]

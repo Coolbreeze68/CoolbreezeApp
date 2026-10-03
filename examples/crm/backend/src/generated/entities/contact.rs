@@ -12,6 +12,7 @@ pub struct Model {
     pub nom: String,
     pub email: Option<String>,
     pub telephone: Option<String>,
+    pub photo: Option<String>,
     pub poste: Option<String>,
     pub entreprise: Option<i64>,
     #[sea_orm(column_type = "Text")]

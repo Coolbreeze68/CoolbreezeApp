@@ -96,11 +96,11 @@ fn json_schema_file_is_up_to_date() {
 #[test]
 fn json_errors_have_paths() {
     let mut schema = base();
-    schema["tables"][1]["columns"][1]["type"] = json!("money");
+    schema["tables"][1]["columns"][1]["type"] = json!("monnaie");
     assert_issue(
         &schema,
         "tables[1].columns[1].type",
-        "unknown variant `money`",
+        "unknown variant `monnaie`",
     );
 
     let mut schema = base();
@@ -141,6 +141,62 @@ fn frontends() {
     assert_issue(&schema, "app.frontend[1]", "en double");
     schema["app"]["frontend"] = json!("angular");
     assert!(issues(&schema)[0].starts_with("app.frontend"));
+}
+
+#[test]
+fn field_models() {
+    let mut schema = base();
+    schema["app"]["currency"] = json!("USD");
+    let columns = json!([
+        { "name": "teinte", "type": "color", "default": "#3366FF" },
+        { "name": "courriel", "type": "email", "unique": true },
+        { "name": "site", "type": "url" },
+        { "name": "telephone", "type": "phone" },
+        { "name": "notes", "type": "markdown" },
+        { "name": "note", "type": "rating", "max": 10, "default": 7 },
+        { "name": "remise", "type": "percent", "default": 0.1 },
+        { "name": "budget", "type": "money", "currency": "EUR" },
+        { "name": "contrat", "type": "file", "accept": ["application/pdf", "image/*", ".docx"], "max_size": 5 },
+        { "name": "logo", "type": "image" },
+        { "name": "total", "type": "money", "formula": "budget * (1 - remise)" }
+    ]);
+    schema["tables"][0]["columns"]
+        .as_array_mut()
+        .unwrap()
+        .extend(columns.as_array().unwrap().iter().cloned());
+    assert_eq!(issues(&schema), Vec::<String>::new());
+
+    let mut bad = schema.clone();
+    bad["app"]["currency"] = json!("euro");
+    assert_issue(&bad, "app.currency", "ISO 4217");
+
+    let column = |value: Value| with_column(0, value);
+    let schema = column(json!({ "name": "c", "type": "color", "default": "rouge" }));
+    assert_issue(&schema, "tables[0].columns[2].default", "#rrggbb");
+    let schema = column(json!({ "name": "n", "type": "rating", "max": 20 }));
+    assert_issue(&schema, "tables[0].columns[2].max", "de 1 à 10");
+    let schema = column(json!({ "name": "n", "type": "integer", "max": 5 }));
+    assert_issue(&schema, "tables[0].columns[2].max", "option inutile");
+    let schema = column(json!({ "name": "m", "type": "money", "currency": "eur" }));
+    assert_issue(&schema, "tables[0].columns[2].currency", "ISO 4217");
+    let schema = column(json!({ "name": "f", "type": "image", "accept": ["image/png"] }));
+    assert_issue(&schema, "tables[0].columns[2].accept", "option inutile");
+    let schema = column(json!({ "name": "f", "type": "file", "accept": ["pdf"] }));
+    assert_issue(&schema, "tables[0].columns[2].accept[0]", "type MIME");
+    let schema = column(json!({ "name": "f", "type": "file", "max_size": 0 }));
+    assert_issue(&schema, "tables[0].columns[2].max_size", "au moins 1 Mo");
+    let schema = column(json!({ "name": "f", "type": "image", "unique": true }));
+    assert_issue(&schema, "tables[0].columns[2].unique", "fichier");
+    let schema = column(json!({ "name": "f", "type": "file", "title_field": true }));
+    assert_issue(&schema, "tables[0].columns[2].title_field", "fichier");
+    let schema = column(json!({ "name": "f", "type": "image", "formula": "nom" }));
+    assert_issue(
+        &schema,
+        "tables[0].columns[2].formula",
+        "ne peut pas être calculée",
+    );
+    let schema = column(json!({ "name": "t", "type": "markdown", "unique": true }));
+    assert_issue(&schema, "tables[0].columns[2].unique", "markdown");
 }
 
 #[test]

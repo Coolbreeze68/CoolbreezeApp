@@ -23,6 +23,8 @@ services:
       FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:-}
       FORGE_CACHE_URL: ${FORGE_CACHE_URL:-}
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+    volumes:
+      - uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -50,3 +52,4 @@ services:
 
 volumes:
   db:
+  uploads:

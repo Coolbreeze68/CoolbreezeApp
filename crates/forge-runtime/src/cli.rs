@@ -8,7 +8,8 @@
 //!
 //! Configuration par options ou variables d'environnement :
 //! `DATABASE_URL`, `FORGE_ADDR`, `FORGE_AUTO_MIGRATE`, `FORGE_CACHE_TTL`,
-//! `FORGE_CACHE_URL`, `FORGE_CORS_ORIGINS`, `FORGE_STATIC_DIR`, `RUST_LOG`, `FORGE_LOG_FORMAT`,
+//! `FORGE_CACHE_URL`, `FORGE_CORS_ORIGINS`, `FORGE_STATIC_DIR`, `FORGE_UPLOAD_DIR`, `RUST_LOG`,
+//! `FORGE_LOG_FORMAT`,
 //! et pour l'authentification
 //! `FORGE_JWT_SECRET`, `FORGE_ADMIN_EMAIL`, `FORGE_ADMIN_PASSWORD`.
 
@@ -30,10 +31,11 @@ use tower::ServiceExt;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::app::{App, DEFAULT_CACHE_CAPACITY};
+use crate::app::{App, DEFAULT_CACHE_CAPACITY, DEFAULT_UPLOAD_DIR};
 use crate::auth::AuthConfig;
 use crate::cache::MemoryCache;
 use crate::error::Error;
+use crate::files::DiskStorage;
 use crate::observability::{self, LogFormat};
 
 #[derive(Debug, Parser)]
@@ -69,10 +71,14 @@ struct Cli {
     #[arg(long, env = "FORGE_CORS_ORIGINS", value_delimiter = ',')]
     cors_origins: Vec<String>,
 
-    /// Application web à servir (dossier de `flutter build web`) : toute
+    /// Application web à servir (`web/dist` ou `app/build/web`) : toute
     /// adresse hors de l'API y est cherchée, `index.html` par défaut.
     #[arg(long, env = "FORGE_STATIC_DIR")]
     static_dir: Option<PathBuf>,
+
+    /// Dossier des fichiers téléversés (colonnes `file` et `image`).
+    #[arg(long, env = "FORGE_UPLOAD_DIR", default_value = DEFAULT_UPLOAD_DIR)]
+    upload_dir: PathBuf,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -134,7 +140,9 @@ async fn execute<M: MigratorTrait>(
             }
             // Une variable vide (docker-compose) vaut une variable absente.
             let cache_url = cli.cache_url.as_deref().filter(|u| !u.is_empty());
-            let app = with_cache(app()?, cli.cache_ttl, cache_url).await?;
+            let app = with_cache(app()?, cli.cache_ttl, cache_url)
+                .await?
+                .storage(DiskStorage::new(cli.upload_dir));
             let db = connect(&cli.database_url, false).await?;
             let mut router = app.into_router(db, AuthConfig::from_env()).await?;
             if let Some(dir) = cli.static_dir.filter(|d| !d.as_os_str().is_empty()) {

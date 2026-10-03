@@ -1,7 +1,7 @@
 //! Validation d'un corps JSON de création ou de modification, selon le schéma.
 
 use forge_schema::spec::{ColumnType, Table};
-use forge_schema::value::{self, TypedValue};
+use forge_schema::value::{self, Domain, TypedValue};
 use serde_json::Value as Json;
 
 use crate::columns;
@@ -61,12 +61,18 @@ pub(crate) fn parse(table: &Table, body: Json, mode: Mode) -> Result<Payload, Er
             }
             continue;
         }
-        match value::from_json(column.ty, column.values.as_deref(), &json) {
+        // Un fichier s'écrit par son identifiant ; sa description lue est acceptée.
+        let json = match json {
+            Json::Object(mut file) if column.ty.is_file() => file.remove("id").unwrap_or_default(),
+            json => json,
+        };
+        match value::from_json(column.ty, Domain::of(column), &json) {
             Ok(TypedValue::Null) if column.required => {
                 push(&mut errors, &key, "valeur obligatoire".to_owned());
             }
             Ok(TypedValue::String(s))
-                if column.ty == ColumnType::String && s.chars().count() > STRING_MAX_CHARS =>
+                if column.ty.base() == ColumnType::String
+                    && s.chars().count() > STRING_MAX_CHARS =>
             {
                 push(
                     &mut errors,
@@ -88,12 +94,10 @@ pub(crate) fn parse(table: &Table, body: Json, mode: Mode) -> Result<Payload, Er
                 continue;
             }
             match &column.default {
-                Some(default) => {
-                    match value::from_json(column.ty, column.values.as_deref(), default) {
-                        Ok(typed) => payload.values.push((column.name.clone(), column.ty, typed)),
-                        Err(message) => push(&mut errors, &column.name, message),
-                    }
-                }
+                Some(default) => match value::from_json(column.ty, Domain::of(column), default) {
+                    Ok(typed) => payload.values.push((column.name.clone(), column.ty, typed)),
+                    Err(message) => push(&mut errors, &column.name, message),
+                },
                 None if column.required => {
                     push(&mut errors, &column.name, "valeur obligatoire".to_owned());
                 }

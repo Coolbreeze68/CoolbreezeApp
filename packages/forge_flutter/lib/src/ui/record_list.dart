@@ -169,7 +169,7 @@ class _RecordTable extends StatelessWidget {
               DataColumn(
                 label: Text(format.columnLabel(column)),
                 numeric: column.type.isNumeric,
-                onSort: column.stored && onSort != null
+                onSort: column.stored && !column.type.isFile && onSort != null
                     ? (_, ascending) =>
                           onSort!([Sort(column.name, descending: !ascending)])
                     : null,

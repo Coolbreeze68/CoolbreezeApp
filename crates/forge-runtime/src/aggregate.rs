@@ -73,12 +73,7 @@ impl AggregateQuery {
             );
         }
         for field in &fields {
-            let numeric = columns::queryable(table, field).is_some_and(|q| {
-                matches!(
-                    q.ty,
-                    ColumnType::Integer | ColumnType::Decimal | ColumnType::Duration
-                )
-            });
+            let numeric = columns::queryable(table, field).is_some_and(|q| q.ty.is_numeric());
             if !numeric {
                 error(
                     "fields",
@@ -87,7 +82,7 @@ impl AggregateQuery {
             }
         }
         let group_by = group_by.and_then(|name| match columns::queryable(table, &name) {
-            Some(q) if q.ty != ColumnType::Text => Some((name, q.ty)),
+            Some(q) if q.ty.base() != ColumnType::Text && !q.ty.is_file() => Some((name, q.ty)),
             _ => {
                 error("group_by", format!("regroupement impossible sur `{name}`"));
                 None

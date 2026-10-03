@@ -16,6 +16,7 @@ use crate::names::{
     RESERVED_ROUTES, SYSTEM_COLUMNS, SYSTEM_TABLES, USER_FIELDS, check_identifier, check_locale,
 };
 use crate::spec::{Action, Column, ColumnType, Label, Spec, Table};
+use crate::value::Domain;
 use crate::{graph, graphql};
 
 pub(crate) fn validate(spec: Spec) -> Result<Model, SchemaError> {
@@ -233,6 +234,11 @@ impl<'a> Validator<'a> {
                 self.error(format!("app.frontend[{i}]"), "interface en double");
             }
         }
+        if let Some(currency) = &app.currency
+            && let Err(msg) = check_currency(currency)
+        {
+            self.error("app.currency", msg);
+        }
     }
 
     fn check_label(&mut self, path: &str, label: Option<&Label>) {
@@ -288,7 +294,7 @@ impl<'a> Validator<'a> {
                     format!("type `{}` non autorisé pour un paramètre", param.ty.name()),
                 );
             } else if let Some(default) = &param.default
-                && let Err(msg) = check_value(param.ty, None, default)
+                && let Err(msg) = check_value(param.ty, Domain::default(), default)
             {
                 self.error(format!("{path}.default"), msg);
             }
@@ -411,6 +417,7 @@ impl<'a> Validator<'a> {
         if let Some(values) = &column.values {
             self.check_enum_values(path, values);
         }
+        self.check_model_options(path, column);
 
         // Colonnes calculées.
         if column.formula.is_some() && !ty.is_scalar() {
@@ -440,17 +447,18 @@ impl<'a> Validator<'a> {
             }
         }
 
-        if column.unique && (!column.is_stored() || ty == ColumnType::Text) {
+        if column.unique && (!column.is_stored() || ty.base() == ColumnType::Text || ty.is_file()) {
             self.error(
                 format!("{path}.unique"),
                 "`unique` exige une colonne stockée en base et indexable (pas `text`, \
-                 `reference_list`, `lookup` ni formule non persistée)",
+                 `markdown`, fichier, `reference_list`, `lookup` ni formule non persistée)",
             );
         }
-        if column.title_field && (column.hidden || ty == ColumnType::ReferenceList) {
+        if column.title_field && (column.hidden || ty == ColumnType::ReferenceList || ty.is_file())
+        {
             self.error(
                 format!("{path}.title_field"),
-                "un champ d'intitulé ne peut être ni `hidden` ni `reference_list`",
+                "un champ d'intitulé ne peut être ni `hidden`, ni `reference_list`, ni un fichier",
             );
         }
         if let Some(default) = &column.default {
@@ -459,8 +467,13 @@ impl<'a> Validator<'a> {
                     format!("{path}.default"),
                     "pas de valeur par défaut pour une relation",
                 );
+            } else if ty.is_file() {
+                self.error(
+                    format!("{path}.default"),
+                    "pas de valeur par défaut pour un fichier",
+                );
             } else if !column.is_computed()
-                && let Err(msg) = check_value(ty, column.values.as_deref(), default)
+                && let Err(msg) = check_value(ty, Domain::of(column), default)
             {
                 self.error(format!("{path}.default"), msg);
             }
@@ -485,6 +498,60 @@ impl<'a> Validator<'a> {
                 format!("une colonne `{}` exige l'option `{option}`", ty.name()),
             ),
             _ => {}
+        }
+    }
+
+    /// Options des modèles de champ : `max`, `currency`, `max_size`, `accept`.
+    fn check_model_options(&mut self, path: &str, column: &Column) {
+        let ty = column.ty;
+        for (option, present, expected) in [
+            ("max", column.max.is_some(), ty == ColumnType::Rating),
+            (
+                "currency",
+                column.currency.is_some(),
+                ty == ColumnType::Money,
+            ),
+            ("max_size", column.max_size.is_some(), ty.is_file()),
+            ("accept", column.accept.is_some(), ty == ColumnType::File),
+        ] {
+            if present && !expected {
+                self.error(
+                    format!("{path}.{option}"),
+                    format!("option inutile pour une colonne `{}`", ty.name()),
+                );
+            }
+        }
+        if let Some(max) = column.max
+            && !(1..=10).contains(&max)
+        {
+            self.error(format!("{path}.max"), "la note maximale va de 1 à 10");
+        }
+        if let Some(currency) = &column.currency
+            && let Err(msg) = check_currency(currency)
+        {
+            self.error(format!("{path}.currency"), msg);
+        }
+        if column.max_size == Some(0) {
+            self.error(
+                format!("{path}.max_size"),
+                "la taille maximale est d'au moins 1 Mo",
+            );
+        }
+        if let Some(accept) = &column.accept {
+            if accept.is_empty() {
+                self.error(format!("{path}.accept"), "au moins un type est requis");
+            }
+            for (k, pattern) in accept.iter().enumerate() {
+                if !is_accept_pattern(pattern) {
+                    self.error(
+                        format!("{path}.accept[{k}]"),
+                        format!(
+                            "`{pattern}` invalide : attendu un type MIME (`application/pdf`, \
+                             `image/*`) ou une extension (`.csv`)"
+                        ),
+                    );
+                }
+            }
         }
     }
 
@@ -874,13 +941,14 @@ impl<'a> Validator<'a> {
                         &format!("{path}.group_by"),
                         table,
                         group_by,
-                        "enum, boolean, reference ou string",
+                        "enum, boolean, reference, rating ou string",
                         |ty| {
                             matches!(
                                 ty,
                                 ColumnType::Enum
                                     | ColumnType::Boolean
                                     | ColumnType::Reference
+                                    | ColumnType::Rating
                                     | ColumnType::String
                             )
                         },
@@ -1291,10 +1359,32 @@ impl TypeEnv for Types<'_, '_> {
 }
 
 /// Vérifie qu'une valeur JSON (défaut d'une colonne ou d'un paramètre) correspond au type.
-fn check_value(
-    ty: ColumnType,
-    values: Option<&[String]>,
-    value: &serde_json::Value,
-) -> Result<(), String> {
-    crate::value::from_json(ty, values, value).map(drop)
+fn check_value(ty: ColumnType, domain: Domain, value: &serde_json::Value) -> Result<(), String> {
+    crate::value::from_json(ty, domain, value).map(drop)
+}
+
+/// Code de devise ISO 4217 : trois lettres majuscules.
+fn check_currency(code: &str) -> Result<(), String> {
+    if code.len() == 3 && code.chars().all(|c| c.is_ascii_uppercase()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "devise `{code}` invalide : attendu un code ISO 4217 (`EUR`, `USD`)"
+        ))
+    }
+}
+
+/// Type accepté par une colonne `file` : `type/sous-type`, `type/*` ou `.extension`.
+fn is_accept_pattern(pattern: &str) -> bool {
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '+' | '.'))
+    };
+    match pattern.split_once('/') {
+        Some((kind, sub)) => token(kind) && (sub == "*" || token(sub)),
+        None => pattern
+            .strip_prefix('.')
+            .is_some_and(|ext| token(ext) && !ext.contains('.')),
+    }
 }

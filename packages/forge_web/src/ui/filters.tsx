@@ -14,8 +14,8 @@ import { useState } from 'react';
 import { equals, type Filter, oneOf } from '../api/query';
 import { useForge } from '../context';
 import type { ColumnSchema, TableSchema } from '../schema';
-import { visibleColumns } from '../schema';
-import { dateTimeToJson, jsonToDate } from '../values';
+import { isDecimal, isFile, isText, visibleColumns } from '../schema';
+import { dateTimeToJson, jsonToDate, parsePercentInput, percentText } from '../values';
 import { ReferenceSelect } from './ReferenceSelect';
 
 /** Filtre posé par l'utilisateur sur une colonne. */
@@ -30,7 +30,10 @@ export type ColumnFilter =
 
 /** Colonnes filtrables : stockées et affichées. */
 export const filterableColumns = (table: TableSchema) =>
-  visibleColumns(table).filter((c) => !c.virtual && c.type !== 'reference_list');
+  visibleColumns(table).filter((c) => !c.virtual && c.type !== 'reference_list' && !isFile(c.type));
+
+/** Colonne filtrée par « contient ». */
+const isTextual = (column: ColumnSchema) => isText(column.type) || column.type === 'color';
 
 /** Filtres d'API d'un filtre de colonne. */
 export function toApiFilters(filter: ColumnFilter): Filter[] {
@@ -138,16 +141,15 @@ export function FilterModal({
   const [min, setMin] = useState<string | null>(current?.kind === 'range' ? current.min : null);
   const [max, setMax] = useState<string | null>(current?.kind === 'range' ? current.max : null);
   const minutes = column.type === 'duration';
+  const percent = column.type === 'percent';
 
   const build = (): ColumnFilter | null => {
+    if (isTextual(column)) return text.trim() ? { kind: 'text', column, text: text.trim() } : null;
     switch (column.type) {
       case 'enum':
         return choices.length ? { kind: 'choice', column, values: choices } : null;
       case 'boolean':
         return bool === 'all' ? null : { kind: 'bool', column, value: bool === 'true' };
-      case 'string':
-      case 'text':
-        return text.trim() ? { kind: 'text', column, text: text.trim() } : null;
       case 'reference':
         return reference === null ? null : { kind: 'reference', column, id: reference };
       default:
@@ -159,17 +161,19 @@ export function FilterModal({
     <NumberInput
       label={label}
       decimalSeparator={format.locale.startsWith('fr') ? ',' : '.'}
-      allowDecimal={column.type === 'decimal'}
-      suffix={minutes ? ` ${strings.minutesUnit}` : undefined}
-      value={value === null ? '' : minutes ? Number(value) / 60 : Number(value)}
-      onChange={(v) =>
-        set(v === '' || v === null ? null : String(minutes ? Math.round(Number(v) * 60) : v))
-      }
+      allowDecimal={isDecimal(column.type)}
+      suffix={minutes ? ` ${strings.minutesUnit}` : percent ? ' %' : undefined}
+      value={value === null ? '' : minutes ? Number(value) / 60 : percent ? percentText(value) : Number(value)}
+      onChange={(v) => {
+        if (v === '' || v === null) return set(null);
+        if (minutes) return set(String(Math.round(Number(v) * 60)));
+        set(percent ? parsePercentInput(String(v)) : String(v));
+      }}
     />
   );
 
   let editor;
-  switch (column.type) {
+  switch (isTextual(column) ? 'text' : column.type) {
     case 'enum':
       editor = (
         <Chip.Group multiple value={choices} onChange={setChoices}>
@@ -196,7 +200,6 @@ export function FilterModal({
         />
       );
       break;
-    case 'string':
     case 'text':
       editor = (
         <TextInput

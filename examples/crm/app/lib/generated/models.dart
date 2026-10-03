@@ -9,6 +9,7 @@ import 'package:decimal/decimal.dart';
 import 'package:forge_flutter/forge_flutter.dart'
     show
         ForgeClient,
+        ForgeFile,
         TableClient,
         dateTimeToJson,
         dateToJson,
@@ -28,7 +29,10 @@ class Entreprise {
     this.secteur,
     this.ville,
     this.siteWeb,
+    this.logo,
+    this.satisfaction,
     this.chiffreAffaires,
+    this.presentation,
     this.pipeline,
     this.pipelinePondere,
     this.nbContacts,
@@ -43,7 +47,10 @@ class Entreprise {
     secteur: EntrepriseSecteur.fromJson(json['secteur']),
     ville: json['ville'] as String?,
     siteWeb: json['site_web'] as String?,
+    logo: ForgeFile.fromJson(json['logo']),
+    satisfaction: json['satisfaction'] as int?,
     chiffreAffaires: jsonToDecimal(json['chiffre_affaires']),
+    presentation: json['presentation'] as String?,
     pipeline: jsonToDecimal(json['pipeline']),
     pipelinePondere: jsonToDecimal(json['pipeline_pondere']),
     nbContacts: json['nb_contacts'] as int?,
@@ -66,7 +73,10 @@ class Entreprise {
   final EntrepriseSecteur? secteur;
   final String? ville;
   final String? siteWeb;
+  final ForgeFile? logo;
+  final int? satisfaction;
   final Decimal? chiffreAffaires;
+  final String? presentation;
   final Decimal? pipeline;
   final Decimal? pipelinePondere;
   final int? nbContacts;
@@ -80,7 +90,10 @@ class Entreprise {
     'secteur': secteur?.value,
     'ville': ville,
     'site_web': siteWeb,
+    'logo': logo?.id,
+    'satisfaction': satisfaction,
     'chiffre_affaires': decimalToJson(chiffreAffaires),
+    'presentation': presentation,
   };
 }
 
@@ -92,6 +105,7 @@ class Contact {
     required this.nom,
     this.email,
     this.telephone,
+    this.photo,
     this.poste,
     this.entreprise,
     this.secteur,
@@ -107,6 +121,7 @@ class Contact {
     nom: json['nom'] as String,
     email: json['email'] as String?,
     telephone: json['telephone'] as String?,
+    photo: ForgeFile.fromJson(json['photo']),
     poste: json['poste'] as String?,
     entreprise: json['entreprise'] as int?,
     secteur: EntrepriseSecteur.fromJson(json['secteur']),
@@ -130,6 +145,7 @@ class Contact {
   final String nom;
   final String? email;
   final String? telephone;
+  final ForgeFile? photo;
   final String? poste;
   final int? entreprise;
   final EntrepriseSecteur? secteur;
@@ -144,6 +160,7 @@ class Contact {
     'nom': nom,
     'email': email,
     'telephone': telephone,
+    'photo': photo?.id,
     'poste': poste,
     'entreprise': entreprise,
     'notes': notes,
@@ -166,6 +183,7 @@ class Opportunite {
     this.dateCloture,
     this.joursRestants,
     required this.tags,
+    this.devis,
     this.notesInternes,
     this.owner,
     required this.createdAt,
@@ -186,6 +204,7 @@ class Opportunite {
     dateCloture: jsonToDate(json['date_cloture']),
     joursRestants: json['jours_restants'] as int?,
     tags: jsonToIds(json['tags']),
+    devis: ForgeFile.fromJson(json['devis']),
     notesInternes: json['notes_internes'] as String?,
     owner: json['owner'] as int?,
     createdAt: jsonToDateTime(json['created_at'])!,
@@ -214,6 +233,7 @@ class Opportunite {
   final DateTime? dateCloture;
   final int? joursRestants;
   final List<int> tags;
+  final ForgeFile? devis;
   final String? notesInternes;
   final int? owner;
   final DateTime createdAt;
@@ -229,6 +249,7 @@ class Opportunite {
     'etape': etape?.value,
     'date_cloture': dateToJson(dateCloture),
     'tags': tags,
+    'devis': devis?.id,
     'notes_internes': notesInternes,
   };
 }

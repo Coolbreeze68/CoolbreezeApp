@@ -21,6 +21,14 @@
     "App": {
       "additionalProperties": false,
       "properties": {
+        "currency": {
+          "default": null,
+          "description": "Devise par défaut des colonnes `money` (code ISO 4217, `EUR` par défaut).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "default_locale": {
           "description": "Langue par défaut ; doit figurer dans `locales`.",
           "type": "string"
@@ -81,6 +89,25 @@
     "Column": {
       "additionalProperties": false,
       "properties": {
+        "accept": {
+          "default": null,
+          "description": "`file` : types acceptés, MIME (`application/pdf`, `image/*`) ou extensions (`.csv`).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "currency": {
+          "default": null,
+          "description": "`money` : devise (code ISO 4217), par défaut `app.currency`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "default": {
           "default": null,
           "description": "Valeur par défaut, du type de la colonne."
@@ -114,6 +141,26 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "max": {
+          "default": null,
+          "description": "`rating` : note maximale (1 à 10, 5 par défaut).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_size": {
+          "default": null,
+          "description": "`file` / `image` : taille maximale en Mo (10 par défaut).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
           ]
         },
         "name": {
@@ -222,6 +269,56 @@
         {
           "const": "lookup",
           "description": "Valeur lue via un chemin de références (`path`), en lecture seule.",
+          "type": "string"
+        },
+        {
+          "const": "color",
+          "description": "Couleur `#rrggbb` (sélecteur de couleur).",
+          "type": "string"
+        },
+        {
+          "const": "email",
+          "description": "Adresse e-mail.",
+          "type": "string"
+        },
+        {
+          "const": "url",
+          "description": "Adresse web `http(s)://`.",
+          "type": "string"
+        },
+        {
+          "const": "phone",
+          "description": "Numéro de téléphone.",
+          "type": "string"
+        },
+        {
+          "const": "markdown",
+          "description": "Texte long mis en forme en Markdown.",
+          "type": "string"
+        },
+        {
+          "const": "rating",
+          "description": "Note entière de 0 à `max` (5 par défaut), affichée en étoiles.",
+          "type": "string"
+        },
+        {
+          "const": "percent",
+          "description": "Pourcentage, stocké en proportion (`0.25` pour 25 %).",
+          "type": "string"
+        },
+        {
+          "const": "money",
+          "description": "Montant dans la devise `currency`.",
+          "type": "string"
+        },
+        {
+          "const": "file",
+          "description": "Fichier téléversé (taille limitée par `max_size`, types par `accept`).",
+          "type": "string"
+        },
+        {
+          "const": "image",
+          "description": "Image téléversée (PNG, JPEG, GIF ou WebP).",
           "type": "string"
         }
       ]

@@ -85,6 +85,17 @@ pub struct App {
     /// `"web"` (React), ou les deux : `["flutter", "web"]`.
     #[serde(default)]
     pub frontend: Frontends,
+    /// Devise par défaut des colonnes `money` (code ISO 4217, `EUR` par défaut).
+    #[serde(default)]
+    pub currency: Option<String>,
+}
+
+impl App {
+    pub const DEFAULT_CURRENCY: &str = "EUR";
+
+    pub fn currency(&self) -> &str {
+        self.currency.as_deref().unwrap_or(Self::DEFAULT_CURRENCY)
+    }
 }
 
 /// Interface utilisateur générée.
@@ -180,6 +191,26 @@ pub enum ColumnType {
     ReferenceList,
     /// Valeur lue via un chemin de références (`path`), en lecture seule.
     Lookup,
+    /// Couleur `#rrggbb` (sélecteur de couleur).
+    Color,
+    /// Adresse e-mail.
+    Email,
+    /// Adresse web `http(s)://`.
+    Url,
+    /// Numéro de téléphone.
+    Phone,
+    /// Texte long mis en forme en Markdown.
+    Markdown,
+    /// Note entière de 0 à `max` (5 par défaut), affichée en étoiles.
+    Rating,
+    /// Pourcentage, stocké en proportion (`0.25` pour 25 %).
+    Percent,
+    /// Montant dans la devise `currency`.
+    Money,
+    /// Fichier téléversé (taille limitée par `max_size`, types par `accept`).
+    File,
+    /// Image téléversée (PNG, JPEG, GIF ou WebP).
+    Image,
 }
 
 impl ColumnType {
@@ -197,11 +228,42 @@ impl ColumnType {
             Self::Reference => "reference",
             Self::ReferenceList => "reference_list",
             Self::Lookup => "lookup",
+            Self::Color => "color",
+            Self::Email => "email",
+            Self::Url => "url",
+            Self::Phone => "phone",
+            Self::Markdown => "markdown",
+            Self::Rating => "rating",
+            Self::Percent => "percent",
+            Self::Money => "money",
+            Self::File => "file",
+            Self::Image => "image",
         }
     }
 
+    /// Type de base, qui décide du stockage, des filtres et du type en formule :
+    /// un modèle de champ (`color`, `money`…) est un type de base avec une
+    /// validation et une présentation propres.
+    #[must_use]
+    pub fn base(self) -> Self {
+        match self {
+            Self::Color | Self::Email | Self::Url | Self::Phone | Self::File | Self::Image => {
+                Self::String
+            }
+            Self::Markdown => Self::Text,
+            Self::Rating => Self::Integer,
+            Self::Percent | Self::Money => Self::Decimal,
+            other => other,
+        }
+    }
+
+    /// Fichier téléversé (`file` ou `image`) : la colonne stocke son identifiant.
+    pub fn is_file(self) -> bool {
+        matches!(self, Self::File | Self::Image)
+    }
+
     pub fn is_numeric(self) -> bool {
-        matches!(self, Self::Integer | Self::Decimal | Self::Duration)
+        matches!(self.base(), Self::Integer | Self::Decimal | Self::Duration)
     }
 
     pub fn is_temporal(self) -> bool {
@@ -220,6 +282,7 @@ impl ColumnType {
             Self::Date => Type::Date,
             Self::Datetime => Type::DateTime,
             Self::ReferenceList | Self::Lookup => Type::Any,
+            model => model.base().formula_type(),
         }
     }
 
@@ -227,7 +290,7 @@ impl ColumnType {
         !matches!(
             self,
             Self::Enum | Self::Reference | Self::ReferenceList | Self::Lookup
-        )
+        ) && !self.is_file()
     }
 }
 
@@ -278,12 +341,37 @@ pub struct Column {
     /// `lookup` : chemin de références, par exemple `entreprise.secteur`.
     #[serde(default)]
     pub path: Option<String>,
+    /// `rating` : note maximale (1 à 10, 5 par défaut).
+    #[serde(default)]
+    pub max: Option<u32>,
+    /// `money` : devise (code ISO 4217), par défaut `app.currency`.
+    #[serde(default)]
+    pub currency: Option<String>,
+    /// `file` / `image` : taille maximale en Mo (10 par défaut).
+    #[serde(default)]
+    pub max_size: Option<u32>,
+    /// `file` : types acceptés, MIME (`application/pdf`, `image/*`) ou extensions (`.csv`).
+    #[serde(default)]
+    pub accept: Option<Vec<String>>,
     /// Ancien nom de la colonne, pour une migration par renommage sans perte.
     #[serde(default)]
     pub renamed_from: Option<String>,
 }
 
 impl Column {
+    pub const DEFAULT_RATING_MAX: u32 = 5;
+    pub const DEFAULT_MAX_SIZE_MB: u32 = 10;
+
+    /// `rating` : note maximale.
+    pub fn rating_max(&self) -> u32 {
+        self.max.unwrap_or(Self::DEFAULT_RATING_MAX)
+    }
+
+    /// `file` / `image` : taille maximale en octets.
+    pub fn max_size_bytes(&self) -> u64 {
+        u64::from(self.max_size.unwrap_or(Self::DEFAULT_MAX_SIZE_MB)) * 1024 * 1024
+    }
+
     /// Colonne calculée : formule ou lookup.
     pub fn is_computed(&self) -> bool {
         self.formula.is_some() || self.ty == ColumnType::Lookup

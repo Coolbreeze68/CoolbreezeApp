@@ -12,7 +12,11 @@ pub struct Model {
     pub secteur: Option<String>,
     pub ville: Option<String>,
     pub site_web: Option<String>,
+    pub logo: Option<String>,
+    pub satisfaction: Option<i64>,
     pub chiffre_affaires: Option<Decimal>,
+    #[sea_orm(column_type = "Text")]
+    pub presentation: Option<String>,
     pub pipeline: Option<Decimal>,
     pub owner: Option<i64>,
     pub created_at: DateTimeUtc,

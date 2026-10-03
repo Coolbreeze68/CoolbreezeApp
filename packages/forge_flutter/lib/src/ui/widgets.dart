@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/client.dart';
+import '../api/file.dart';
 import '../forge.dart';
 import '../palette.dart';
 import '../router.dart';
 import '../schema.dart';
 import '../values.dart';
+import 'field_models.dart';
 
 class NotFound extends StatelessWidget {
   const NotFound({super.key});
@@ -175,11 +177,41 @@ class ValueView extends StatelessWidget {
         semanticLabel: forge.format.format(table, column, value),
       );
     }
+    final model = _model(column.type, value);
+    if (model != null) return model;
     return Text(
       forge.format.format(table, column, value),
       maxLines: maxLines,
       overflow: maxLines == null ? null : TextOverflow.ellipsis,
     );
+  }
+
+  /// Modèles de champ : couleur, liens, étoiles, Markdown, fichiers.
+  Widget? _model(ColumnType type, Object? value) {
+    final file = ForgeFile.fromJson(value);
+    return switch ((type, value)) {
+      (ColumnType.color, final String hex) => ColorValue(hex),
+      (
+        ColumnType.email || ColumnType.url || ColumnType.phone,
+        final String text,
+      )
+          when links =>
+        LinkValue(type: type, value: text),
+      (ColumnType.rating, final int rating) => RatingStars(
+        value: rating,
+        max: column.max,
+        size: links ? 22 : 16,
+      ),
+      (ColumnType.markdown, final String text) when links && maxLines == null =>
+        MarkdownValue(text),
+      (ColumnType.image, _) when file != null => ImageValue(
+        file,
+        size: links ? 160 : 32,
+        zoom: links,
+      ),
+      (ColumnType.file, _) when file != null => FileValue(file, links: links),
+      _ => null,
+    };
   }
 
   Widget _reference(BuildContext context, String target, int id) {

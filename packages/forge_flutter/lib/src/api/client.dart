@@ -205,19 +205,23 @@ class ForgeClient extends ChangeNotifier {
     return response.bodyBytes;
   }
 
-  /// Envoie un corps brut (import CSV) et décode la réponse JSON.
+  /// Envoie un corps brut (import CSV, fichier) et décode la réponse JSON.
   Future<Object?> postBytes(
     String path,
     Uint8List bytes, {
     String contentType = 'text/csv',
+    Map<String, String>? query,
   }) async {
     final response = await _authenticated(
-      () => http.Request('POST', _uri(path, null))
+      () => http.Request('POST', _uri(path, query))
         ..headers['content-type'] = contentType
         ..bodyBytes = bytes,
     );
     return _decode(response);
   }
+
+  /// Adresse absolue d'un lien de l'API (URL signée d'un fichier).
+  Uri resolve(String url) => baseUrl.resolve(url);
 
   Uri _uri(String path, Map<String, String>? query) => baseUrl.replace(
     path: '${baseUrl.path.replaceAll(RegExp(r'/$'), '')}$path',

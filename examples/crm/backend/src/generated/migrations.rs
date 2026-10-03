@@ -6,6 +6,8 @@ use sea_orm_migration::prelude::*;
 mod m0001_init;
 #[path = "../migrations/m0002_opportunite.rs"]
 mod m0002_opportunite;
+#[path = "../migrations/m0003_entreprise_contact_opportunite.rs"]
+mod m0003_entreprise_contact_opportunite;
 
 /// Migrations système de forge, puis celles de l'application.
 pub struct Migrator;
@@ -15,6 +17,7 @@ impl MigratorTrait for Migrator {
         let mut migrations = forge_runtime::migration::system();
         migrations.push(Box::new(m0001_init::Migration));
         migrations.push(Box::new(m0002_opportunite::Migration));
+        migrations.push(Box::new(m0003_entreprise_contact_opportunite::Migration));
         migrations
     }
 }

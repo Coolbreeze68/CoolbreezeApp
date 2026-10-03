@@ -2,6 +2,16 @@
  * textes modifiés) se déclarent dans `ForgeCustomization.strings`. */
 
 export interface ForgeStrings {
+  /** Unités de taille de fichier, croissantes. */
+  sizeUnits: string[];
+  write: string;
+  preview: string;
+  chooseFile: string;
+  chooseImage: string;
+  replace: string;
+  remove: string;
+  uploading: string;
+  fileTooLarge: (megabytes: number) => string;
   account: string;
   actions: string;
   active: string;
@@ -97,6 +107,15 @@ export interface ForgeStrings {
 }
 
 export const fr: ForgeStrings = {
+  sizeUnits: ['o', 'Ko', 'Mo', 'Go'],
+  write: 'Écrire',
+  preview: 'Aperçu',
+  chooseFile: 'Choisir un fichier',
+  chooseImage: 'Choisir une image',
+  replace: 'Remplacer',
+  remove: 'Retirer',
+  uploading: 'Envoi…',
+  fileTooLarge: (megabytes) => `Fichier trop volumineux (${megabytes} Mo au maximum)`,
   account: 'Mon compte',
   actions: 'Actions',
   active: 'Actif',
@@ -192,6 +211,15 @@ export const fr: ForgeStrings = {
 };
 
 export const en: ForgeStrings = {
+  sizeUnits: ['B', 'KB', 'MB', 'GB'],
+  write: 'Write',
+  preview: 'Preview',
+  chooseFile: 'Choose a file',
+  chooseImage: 'Choose an image',
+  replace: 'Replace',
+  remove: 'Remove',
+  uploading: 'Uploading…',
+  fileTooLarge: (megabytes) => `File too large (${megabytes} MB maximum)`,
   account: 'My account',
   actions: 'Actions',
   active: 'Active',

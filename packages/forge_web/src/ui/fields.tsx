@@ -1,10 +1,24 @@
-import { NumberInput, Select, Switch, Textarea, TextInput } from '@mantine/core';
+import { Group, NumberInput, Select, SimpleGrid, Switch, Textarea, TextInput } from '@mantine/core';
 import { DateInput, DateTimePicker } from '@mantine/dates';
+import { IconLink, IconMail, IconPhone } from '@tabler/icons-react';
+
+import type { Json } from '../api/client';
 
 import type { FieldProps } from '../customization';
 import { useForge } from '../context';
-import type { ColumnSchema } from '../schema';
-import { dateTimeToJson, jsonToDateTime, jsonToIds, parseDecimalInput, parseIntegerInput } from '../values';
+import type { ColumnSchema, TableSchema } from '../schema';
+import {
+  dateTimeToJson,
+  isValidInput,
+  jsonToDateTime,
+  jsonToIds,
+  parseDecimalInput,
+  parseIntegerInput,
+  parsePercentInput,
+  percentText,
+} from '../values';
+import { CreateRecordButton } from './CreateRecord';
+import { ColorField, FileField, MarkdownField, RatingField } from './models';
 import { ReferenceMultiSelect, ReferenceSelect } from './ReferenceSelect';
 
 /** Saisie qui ne correspond pas au type de la colonne (nombre mal écrit…). */
@@ -28,6 +42,7 @@ export function parseInitialValue(column: ColumnSchema, text: string): unknown {
   switch (column.type) {
     case 'integer':
     case 'duration':
+    case 'rating':
     case 'reference':
       return Number.isInteger(Number(text)) ? Number(text) : null;
     case 'boolean':
@@ -109,16 +124,70 @@ export function Field(props: FieldProps) {
       );
     case 'reference':
       return (
-        <ReferenceSelect
-          {...common}
-          target={column.target!}
-          value={typeof value === 'number' ? value : null}
-          onChange={onChange}
-          required={column.required}
-        />
+        <Group gap="xs" align="flex-end" wrap="nowrap">
+          <ReferenceSelect
+            {...common}
+            target={column.target!}
+            value={typeof value === 'number' ? value : null}
+            onChange={onChange}
+            required={column.required}
+            style={{ flex: 1 }}
+          />
+          <CreateRecordButton target={column.target!} onCreated={onChange} />
+        </Group>
       );
     case 'reference_list':
-      return <ReferenceMultiSelect {...common} target={column.target!} value={jsonToIds(value)} onChange={onChange} />;
+      return (
+        <Group gap="xs" align="flex-end" wrap="nowrap">
+          <ReferenceMultiSelect {...common} target={column.target!} value={jsonToIds(value)} onChange={onChange} style={{ flex: 1 }} />
+          <CreateRecordButton target={column.target!} onCreated={(id) => onChange([...jsonToIds(value), id])} />
+        </Group>
+      );
+    case 'color':
+      return <ColorField {...props} label={common.label} />;
+    case 'rating':
+      return <RatingField {...props} label={common.label} />;
+    case 'markdown':
+      return <MarkdownField {...props} label={common.label} />;
+    case 'file':
+    case 'image':
+      return <FileField {...props} label={common.label} />;
+    case 'percent':
+    case 'money':
+      return (
+        <TextInput
+          {...common}
+          inputMode="decimal"
+          rightSection={column.type === 'percent' ? '%' : format.currencySymbol(column.currency ?? 'EUR')}
+          defaultValue={(() => {
+            const shown = column.type === 'percent' && typeof value === 'string' ? percentText(value) : text;
+            return locale.startsWith('fr') ? shown.replace('.', ',') : shown;
+          })()}
+          onChange={(e) => {
+            const input = e.currentTarget.value;
+            const parsed = column.type === 'percent' ? parsePercentInput(input) : parseDecimalInput(input);
+            onChange(input.trim() === '' ? null : (parsed ?? new InvalidInput(input)));
+          }}
+        />
+      );
+    case 'email':
+    case 'url':
+    case 'phone': {
+      const Icon = column.type === 'email' ? IconMail : column.type === 'phone' ? IconPhone : IconLink;
+      return (
+        <TextInput
+          {...common}
+          type={column.type === 'phone' ? 'tel' : column.type}
+          leftSection={<Icon size={16} />}
+          maxLength={255}
+          defaultValue={text}
+          onChange={(e) => {
+            const input = e.currentTarget.value.trim();
+            onChange(input === '' ? null : isValidInput(column.type, input) ? input : new InvalidInput(input));
+          }}
+        />
+      );
+    }
     case 'integer':
       return (
         <NumberInput
@@ -159,4 +228,32 @@ export function Field(props: FieldProps) {
     default:
       return <TextInput {...common} maxLength={255} value={text} onChange={(e) => onChange(e.currentTarget.value)} />;
   }
+}
+
+/** Champs d'un formulaire, en grille ; les champs larges occupent toute la ligne. */
+export function FieldGrid({
+  table,
+  columns,
+  values,
+  error,
+  onChange,
+  cols = 2,
+}: {
+  table: TableSchema;
+  columns: ColumnSchema[];
+  values: Json;
+  error: (column: ColumnSchema) => string | undefined;
+  onChange: (name: string, value: unknown) => void;
+  cols?: number;
+}) {
+  const wide = (c: ColumnSchema) => ['text', 'markdown', 'reference_list'].includes(c.type);
+  return (
+    <SimpleGrid cols={{ base: 1, md: cols }} spacing="lg">
+      {columns.map((c) => (
+        <div key={c.name} style={wide(c) ? { gridColumn: '1 / -1' } : undefined}>
+          <Field table={table} column={c} value={values[c.name]} error={error(c)} onChange={(value) => onChange(c.name, value)} />
+        </div>
+      ))}
+    </SimpleGrid>
+  );
 }

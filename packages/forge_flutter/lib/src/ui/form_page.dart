@@ -18,6 +18,7 @@ class FormPage extends StatefulWidget {
     required this.table,
     this.id,
     this.initial = const {},
+    this.returnsId = false,
   });
 
   final TableSchema table;
@@ -25,6 +26,9 @@ class FormPage extends StatefulWidget {
 
   /// Valeurs initiales d'une création, au format de l'API (paramètres d'URL).
   final Map<String, String> initial;
+
+  /// Après création, revient à la page précédente avec l'identifiant créé.
+  final bool returnsId;
 
   @override
   State<FormPage> createState() => _FormPageState();
@@ -136,7 +140,9 @@ class _FormPageState extends State<FormPage> {
 
   /// Après l'enregistrement : la fiche, en remplaçant le formulaire.
   void _leave(int id) {
-    if (_creating || !context.canPop()) {
+    if (widget.returnsId) {
+      context.pop(id);
+    } else if (_creating || !context.canPop()) {
       context.pushReplacement(Paths.record(table.name, id));
     } else {
       context.pop();

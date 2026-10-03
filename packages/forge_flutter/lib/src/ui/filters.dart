@@ -1,3 +1,4 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
 import '../api/query.dart';
@@ -107,9 +108,22 @@ class RangeFilter extends ColumnFilter {
 }
 
 /// Colonnes filtrables : stockées et affichées.
-Iterable<ColumnSchema> filterableColumns(TableSchema table) => table
-    .visibleColumns
-    .where((c) => c.stored && c.type != ColumnType.referenceList);
+Iterable<ColumnSchema> filterableColumns(TableSchema table) =>
+    table.visibleColumns.where(
+      (c) => c.stored && c.type != ColumnType.referenceList && !c.type.isFile,
+    );
+
+/// Colonne filtrée par « contient ».
+bool _isText(ColumnType type) => switch (type) {
+  ColumnType.string ||
+  ColumnType.text ||
+  ColumnType.color ||
+  ColumnType.email ||
+  ColumnType.url ||
+  ColumnType.phone ||
+  ColumnType.markdown => true,
+  _ => false,
+};
 
 /// Puce d'un filtre actif : « Étape : Gagné, Perdu ».
 class FilterChipView extends StatelessWidget {
@@ -256,7 +270,7 @@ class _FilterDialogState extends State<_FilterDialog> {
     ColumnType.enumeration =>
       _choices.isEmpty ? null : ChoiceFilter(column, _choices),
     ColumnType.boolean => _bool == null ? null : BoolFilter(column, _bool!),
-    ColumnType.string || ColumnType.text =>
+    final type when _isText(type) =>
       _text.text.trim().isEmpty ? null : TextFilter(column, _text.text.trim()),
     _ =>
       _min == null && _max == null
@@ -316,7 +330,7 @@ class _FilterDialogState extends State<_FilterDialog> {
           selected: {_bool},
           onSelectionChanged: (value) => setState(() => _bool = value.first),
         );
-      case ColumnType.string || ColumnType.text:
+      case final type when _isText(type):
         return TextField(
           controller: _text,
           autofocus: true,
@@ -363,22 +377,32 @@ class _FilterDialogState extends State<_FilterDialog> {
   Widget _numberBound(String label, Object? value, ValueChanged<Object?> set) {
     final s = Forge.of(context).strings;
     final minutes = column.type == ColumnType.duration;
+    final percent = column.type == ColumnType.percent;
     return TextFormField(
       initialValue: switch (value) {
         null => '',
         final v when minutes => '${(v as num) ~/ 60}',
+        final v when percent => switch (jsonToDecimal(v)) {
+          final ratio? => (ratio * Decimal.fromInt(100)).toString(),
+          null => '$v',
+        },
         final v => '$v',
       },
       decoration: InputDecoration(
         labelText: label,
-        suffixText: minutes ? s.minutesUnit : null,
+        suffixText: minutes
+            ? s.minutesUnit
+            : percent
+            ? '%'
+            : null,
       ),
       keyboardType: const TextInputType.numberWithOptions(
         decimal: true,
         signed: true,
       ),
       onChanged: (text) => set(switch (column.type) {
-        ColumnType.decimal => parseDecimalInput(text),
+        ColumnType.decimal || ColumnType.money => parseDecimalInput(text),
+        ColumnType.percent => parsePercentInput(text),
         ColumnType.duration => switch (parseIntegerInput(text)) {
           final m? => m * 60,
           null => null,

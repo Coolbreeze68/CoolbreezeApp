@@ -17,6 +17,7 @@ pub struct Model {
     pub montant_ttc: Option<Decimal>,
     pub etape: Option<String>,
     pub date_cloture: Option<Date>,
+    pub devis: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub notes_internes: Option<String>,
     pub owner: Option<i64>,

@@ -177,10 +177,15 @@ export class ForgeClient {
     return response.blob();
   }
 
-  /** Envoie un corps brut (import CSV) et décode la réponse JSON. */
-  async postRaw(path: string, body: Blob, contentType = 'text/csv'): Promise<unknown> {
+  /** Envoie un corps brut (import CSV, fichier) et décode la réponse JSON. */
+  async postRaw(
+    path: string,
+    body: Blob,
+    contentType = 'text/csv',
+    query?: Record<string, string>,
+  ): Promise<unknown> {
     const response = await this.authenticated(() => ({
-      url: this.url(path),
+      url: this.url(path, query),
       init: { method: 'POST', body, headers: { 'content-type': contentType } },
     }));
     return decode(response);

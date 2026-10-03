@@ -82,13 +82,14 @@ export function startApp({
   path = '/',
   signedIn = true,
   customization,
-}: { api?: FakeApi; path?: string; signedIn?: boolean; customization?: ForgeCustomization } = {}) {
+  appSchema = schema,
+}: { api?: FakeApi; path?: string; signedIn?: boolean; customization?: ForgeCustomization; appSchema?: AppSchema } = {}) {
   // Sans animations : menus et fenêtres s'ouvrent immédiatement.
   const instant = { defaultProps: { transitionProps: { duration: 0 } } };
   const theme = { components: { Menu: instant, Popover: instant, Modal: instant, Combobox: instant, Select: { defaultProps: { comboboxProps: { transitionProps: { duration: 0 } } } } } };
   render(
     <ForgeApp
-      schema={schema}
+      schema={appSchema}
       client={api.client(signedIn)}
       customization={{ ...customization, theme }}
       initialPath={path}

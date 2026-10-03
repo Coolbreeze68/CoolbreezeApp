@@ -12,6 +12,7 @@
 use axum::Router;
 use forge_schema::graphql as names;
 use forge_schema::spec::{Column, ColumnType, Label, Table};
+use forge_schema::value::Domain;
 use forge_schema::{ColumnRef, Model};
 use serde_json::{Map, Value as JsonValue, json};
 use utoipa::openapi::OpenApi;
@@ -89,8 +90,10 @@ fn schema_ref(name: &str) -> JsonValue {
     json!({ "$ref": format!("#/components/schemas/{name}") })
 }
 
-/// Schéma JSON d'une valeur de type `ty`.
-fn value_schema(ty: ColumnType, values: Option<&[String]>) -> JsonValue {
+/// Schéma JSON d'une valeur de type `ty`, en écriture (un fichier s'écrit
+/// par son identifiant, et se lit décrit : voir [`file_schema`]).
+fn value_schema(ty: ColumnType, domain: Domain) -> JsonValue {
+    let values = domain.values;
     match ty {
         ColumnType::String => json!({ "type": "string", "maxLength": 255 }),
         // Un lookup prend le type de la colonne visée (voir `column_schema`).
@@ -114,7 +117,47 @@ fn value_schema(ty: ColumnType, values: Option<&[String]>) -> JsonValue {
             "type": "array", "items": { "type": "integer", "format": "int64" },
             "description": "Identifiants des enregistrements liés.",
         }),
+        ColumnType::Color => json!({ "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }),
+        ColumnType::Email => json!({ "type": "string", "format": "email", "maxLength": 254 }),
+        ColumnType::Url => json!({ "type": "string", "format": "uri", "maxLength": 255 }),
+        ColumnType::Phone => {
+            json!({ "type": "string", "maxLength": 255, "examples": ["+33 1 23 45 67 89"] })
+        }
+        ColumnType::Markdown => {
+            json!({ "type": "string", "description": "Texte au format Markdown." })
+        }
+        ColumnType::Rating => json!({
+            "type": "integer", "minimum": 0,
+            "maximum": domain.max.unwrap_or(Column::DEFAULT_RATING_MAX),
+        }),
+        ColumnType::Percent => json!({
+            "type": "string", "format": "decimal", "examples": ["0.25"],
+            "description": "Proportion : 0.25 pour 25 %.",
+        }),
+        ColumnType::Money => json!({
+            "type": "string", "format": "decimal", "examples": ["1500.00"],
+            "description": "Montant, en texte (un nombre est accepté en entrée).",
+        }),
+        ColumnType::File | ColumnType::Image => json!({
+            "type": "string", "format": "uuid",
+            "description": "Identifiant renvoyé par `POST /api/files`.",
+        }),
     }
+}
+
+/// Fichier téléversé, tel que lu dans un enregistrement.
+fn file_schema() -> JsonValue {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "name": { "type": "string" },
+            "size": { "type": "integer", "description": "Taille en octets." },
+            "content_type": { "type": "string" },
+            "url": { "type": "string", "description": "Lien temporaire vers le contenu (sans jeton)." },
+        },
+        "required": ["id", "name", "size", "content_type", "url"],
+    })
 }
 
 /// Autorise `null` (OpenAPI 3.1 : `type` devient une liste).
@@ -127,7 +170,11 @@ fn nullable(mut schema: JsonValue) -> JsonValue {
 
 fn column_schema(model: &Model, table: &Table, column: &Column) -> JsonValue {
     let ty = compute::result_type(model, &ColumnRef::new(&table.name, &column.name));
-    let mut schema = value_schema(ty, column.values.as_deref());
+    let mut schema = if ty.is_file() {
+        file_schema()
+    } else {
+        value_schema(ty, Domain::of(column))
+    };
     if let Some(text) = label(column.label.as_ref(), &model.spec().app.default_locale) {
         schema["title"] = json!(text);
     }
@@ -169,7 +216,7 @@ fn input_schema(table: &Table) -> JsonValue {
     let mut properties = Map::new();
     let mut mandatory = Vec::new();
     for column in table.columns.iter().filter(|c| !c.is_computed()) {
-        let mut schema = value_schema(column.ty, column.values.as_deref());
+        let mut schema = value_schema(column.ty, Domain::of(column));
         if let Some(default) = &column.default {
             schema["default"] = default.clone();
         }
@@ -422,7 +469,65 @@ fn item_path(name: &str, tag: &str) -> JsonValue {
 fn system_paths() -> Vec<(String, JsonValue)> {
     let mut paths = auth_paths();
     paths.extend(admin_paths());
+    paths.extend(file_paths());
     paths
+}
+
+fn file_paths() -> Vec<(String, JsonValue)> {
+    let required = |name: &str, ty: &str, description: &str| {
+        let mut parameter = query_parameter(name, &json!({ "type": ty }), description);
+        parameter["required"] = json!(true);
+        parameter
+    };
+    let text = |name: &str, description: &str| required(name, "string", description);
+    let upload = operation(
+        "files",
+        "Téléverse un fichier pour une colonne `file` ou `image`",
+        json!({
+            "description": "Le corps est le contenu du fichier (`Content-Type` : son type). \
+                L'`id` renvoyé s'écrit ensuite dans la colonne, à la création ou à la \
+                modification de l'enregistrement ; un fichier jamais rattaché est supprimé \
+                au bout d'un jour.",
+            "parameters": [
+                text("table", "Table de la colonne"),
+                text("column", "Colonne `file` ou `image`"),
+                text("name", "Nom du fichier"),
+            ],
+            "requestBody": {
+                "required": true,
+                "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } },
+            },
+            "responses": responses(
+                "201",
+                json_response("Fichier", &file_schema()),
+                &[DENIED, INVALID],
+            ),
+        }),
+    );
+    let mut download = operation(
+        "files",
+        "Contenu d'un fichier (URL signée lue dans l'enregistrement)",
+        json!({
+            "parameters": [
+                {
+                    "name": "id", "in": "path", "required": true,
+                    "schema": { "type": "string", "format": "uuid" },
+                },
+                required("expires", "integer", "Expiration (horodatage Unix)"),
+                text("signature", "Signature du lien"),
+            ],
+            "responses": responses(
+                "200",
+                json!({ "description": "Contenu", "content": { "*/*": { "schema": { "type": "string", "format": "binary" } } } }),
+                &[DENIED, MISSING],
+            ),
+        }),
+    );
+    download["security"] = json!([]);
+    vec![
+        ("/api/files".into(), json!({ "post": upload })),
+        ("/api/files/{id}".into(), json!({ "get": download })),
+    ]
 }
 
 fn auth_paths() -> Vec<(String, JsonValue)> {

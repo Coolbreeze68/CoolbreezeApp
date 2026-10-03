@@ -27,3 +27,6 @@ window.ResizeObserver = class {
   unobserve() {}
   disconnect() {}
 };
+Object.defineProperty(document, 'fonts', {
+  value: { addEventListener: () => {}, removeEventListener: () => {} },
+});

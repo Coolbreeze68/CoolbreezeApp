@@ -140,7 +140,8 @@ pub(crate) async fn set(
 ) -> Result<JsonValue, Error> {
     current.require_admin()?;
     let param = declared(state, name)?;
-    value::from_json(param.ty, None, &value).map_err(|msg| Error::validation("value", msg))?;
+    value::from_json(param.ty, value::Domain::default(), &value)
+        .map_err(|msg| Error::validation("value", msg))?;
     let stored = entity::ActiveModel {
         name: Set(name.to_owned()),
         value: Set(Some(value.to_string())),

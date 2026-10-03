@@ -23,9 +23,41 @@ enum ColumnType {
   reference,
 
   /// Liste d'identifiants d'enregistrements de [ColumnSchema.target].
-  referenceList;
+  referenceList,
 
-  bool get isNumeric => this == integer || this == decimal || this == duration;
+  /// Couleur `#rrggbb`.
+  color,
+  email,
+  url,
+  phone,
+
+  /// Texte mis en forme en Markdown.
+  markdown,
+
+  /// Note entière de 0 à [ColumnSchema.max], affichée en étoiles.
+  rating,
+
+  /// Proportion (`0.25` pour 25 %), en texte comme un décimal.
+  percent,
+
+  /// Montant dans la devise [ColumnSchema.currency], en texte comme un décimal.
+  money,
+
+  /// Fichier téléversé : [ForgeFile] en lecture, son identifiant en écriture.
+  file,
+
+  /// Image téléversée.
+  image;
+
+  bool get isNumeric => switch (this) {
+    integer || decimal || duration || rating || percent || money => true,
+    _ => false,
+  };
+
+  /// Valeur décimale, transmise en texte.
+  bool get isDecimal => this == decimal || this == percent || this == money;
+
+  bool get isFile => this == file || this == image;
 
   bool get isTemporal => this == date || this == datetime;
 }
@@ -64,6 +96,10 @@ class ColumnSchema {
     this.stored = true,
     this.target,
     this.values = const [],
+    this.max = 5,
+    this.currency,
+    this.maxSize,
+    this.accept = const [],
   });
 
   final String name;
@@ -92,6 +128,18 @@ class ColumnSchema {
 
   /// Valeurs d'une énumération.
   final List<String> values;
+
+  /// Note maximale d'une colonne `rating`.
+  final int max;
+
+  /// Devise d'une colonne `money` (code ISO 4217).
+  final String? currency;
+
+  /// Taille maximale d'un fichier, en Mo.
+  final int? maxSize;
+
+  /// Types acceptés par une colonne `file` : MIME (`image/*`) ou extensions (`.pdf`).
+  final List<String> accept;
 
   bool get writable => !computed;
 }

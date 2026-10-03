@@ -66,6 +66,7 @@ impl Kind {
             | ColumnType::Enum
             | ColumnType::ReferenceList
             | ColumnType::Lookup => Self::String,
+            model => Self::of(model.base()),
         }
     }
 
@@ -166,6 +167,7 @@ fn builtin_types(mut builder: SchemaBuilder) -> SchemaBuilder {
     for (name, description) in scalars {
         builder = builder.register(Scalar::new(name).description(description));
     }
+    builder = builder.register(file_type());
     for kind in KINDS {
         let scalar = kind.scalar();
         let mut filter = InputObject::new(kind.filter())
@@ -209,10 +211,10 @@ fn record_type(model: &Model, table: &Table, locale: &str) -> Object {
             ColumnType::Reference => reference_field(column),
             ColumnType::ReferenceList => reference_list_field(column),
             ColumnType::Enum => enum_field(&table.name, column),
-            _ => {
-                let ty = compute::result_type(model, &ColumnRef::new(&table.name, &column.name));
-                scalar_field(&column.name, Kind::of(ty), false)
-            }
+            _ => match compute::result_type(model, &ColumnRef::new(&table.name, &column.name)) {
+                ty if ty.is_file() => file_field(&column.name),
+                ty => scalar_field(&column.name, Kind::of(ty), false),
+            },
         };
         if let Some(text) = label(column.label.as_ref(), locale) {
             field = field.description(text);
@@ -242,6 +244,33 @@ fn scalar_field(name: &str, kind: Kind, required: bool) -> Field {
         FieldFuture::new(
             async move { Ok(kind.output(&parent(&ctx)?[&key]).map(FieldValue::value)) },
         )
+    })
+}
+
+/// Fichier téléversé, tel que décrit par [`crate::files`].
+fn file_type() -> Object {
+    Object::new(FILE_TYPE)
+        .description(
+            "Fichier téléversé ; `url` : lien temporaire vers son contenu. \
+             En écriture, une colonne fichier reçoit l'`id` renvoyé par `POST /api/files`.",
+        )
+        .field(scalar_field("id", Kind::String, true))
+        .field(scalar_field("name", Kind::String, true))
+        .field(scalar_field("size", Kind::Int, true))
+        .field(scalar_field("content_type", Kind::String, true))
+        .field(scalar_field("url", Kind::String, true))
+}
+
+const FILE_TYPE: &str = "File";
+
+fn file_field(name: &str) -> Field {
+    let key = name.to_owned();
+    Field::new(name, TypeRef::named(FILE_TYPE), move |ctx| {
+        let key = key.clone();
+        FieldFuture::new(async move {
+            let file = &parent(&ctx)?[&key];
+            Ok((!file.is_null()).then(|| FieldValue::owned_any(file.clone())))
+        })
     })
 }
 

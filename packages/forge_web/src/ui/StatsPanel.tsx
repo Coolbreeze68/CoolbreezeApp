@@ -12,9 +12,16 @@ import { ErrorView, Loading, RecordLink } from './common';
 /** Valeur d'une mesure, mise en forme selon la colonne. */
 export function formatMeasure(forge: Forge, column: ColumnSchema, value: number | null): string {
   if (value === null) return '–';
-  return column.type === 'duration'
-    ? forge.format.duration(Math.round(value))
-    : forge.format.number(Math.round(value * 100) / 100);
+  switch (column.type) {
+    case 'duration':
+      return forge.format.duration(Math.round(value));
+    case 'percent':
+      return forge.format.percent(value);
+    case 'money':
+      return forge.format.money(value, column.currency ?? 'EUR');
+    default:
+      return forge.format.number(Math.round(value * 100) / 100);
+  }
 }
 
 /** Libellé d'une valeur de regroupement. */

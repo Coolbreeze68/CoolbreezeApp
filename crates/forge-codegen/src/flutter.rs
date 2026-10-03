@@ -13,7 +13,7 @@ use serde_json::Value as JsonValue;
 
 use crate::dart::{Expr, call, camel_case, named, pos, quote, raw, statement, string};
 use crate::error::Error;
-use crate::frontend::{operations, shown};
+use crate::frontend::{field_options, operations};
 use crate::render::Renderer;
 use crate::writer::{OutputFile, Policy};
 
@@ -66,25 +66,56 @@ const DART_CORE_TYPES: &[&str] = &[
     "WeakReference",
 ];
 
-/// Import de `forge_flutter` dans `models.dart` (sans préfixe, d'où le
-/// renommage des tables homonymes de ces types).
-const IMPORT: &str = "import 'package:forge_flutter/forge_flutter.dart'
-    show
-        ForgeClient,
-        TableClient,
-        dateTimeToJson,
-        dateToJson,
-        decimalToJson,
-        durationToJson,
-        jsonToDate,
-        jsonToDateTime,
-        jsonToDecimal,
-        jsonToDuration,
-        jsonToIds;
-";
+/// Noms de `forge_flutter` utilisables par `models.dart`, importés sans préfixe
+/// (d'où le renommage des tables homonymes de ces types) et seulement s'ils
+/// servent.
+const IMPORTABLE: &[&str] = &[
+    "ForgeClient",
+    "ForgeFile",
+    "TableClient",
+    "dateTimeToJson",
+    "dateToJson",
+    "decimalToJson",
+    "durationToJson",
+    "jsonToDate",
+    "jsonToDateTime",
+    "jsonToDecimal",
+    "jsonToDuration",
+    "jsonToIds",
+];
+
+/// `name` apparaît-il comme identifiant entier dans `code` ?
+fn uses(code: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    code.match_indices(name).any(|(i, _)| {
+        !code[..i].ends_with(is_ident) && !code[i + name.len()..].starts_with(is_ident)
+    })
+}
+
+/// Imports de `models.dart`, mis en forme comme par `dart format`.
+fn model_imports(body: &str) -> String {
+    let mut out = String::new();
+    if uses(body, "Decimal") {
+        out.push_str("import 'package:decimal/decimal.dart';\n");
+    }
+    let names: Vec<&str> = IMPORTABLE
+        .iter()
+        .copied()
+        .filter(|name| uses(body, name))
+        .collect();
+    out.push_str("import 'package:forge_flutter/forge_flutter.dart'");
+    let line = format!("    show {};", names.join(", "));
+    if line.len() <= 80 {
+        let _ = write!(out, "\n{line}\n");
+    } else {
+        out.push_str("\n    show\n");
+        let _ = writeln!(out, "        {};", names.join(",\n        "));
+    }
+    out
+}
 
 /// Types importés par `models.dart`.
-const IMPORTED_TYPES: &[&str] = &["Decimal", "ForgeClient", "TableClient"];
+const IMPORTED_TYPES: &[&str] = &["Decimal", "ForgeClient", "ForgeFile", "TableClient"];
 
 /// Noms déjà pris dans une classe de modèle ou une énumération.
 const MEMBERS: &[&str] = &[
@@ -294,7 +325,7 @@ impl Flutter<'_> {
     }
 
     fn column(&self, table: &str, column: &Column) -> Expr {
-        let (_, shown) = shown(self.model, table, column);
+        let (_, shown) = self.model.resolved(table, column);
         let mut args = vec![pos(string(&column.name)), pos(column_type(shown.ty))];
         args.extend(column.label.as_ref().map(|l| named("label", label(l))));
         let flag = |name: &str, on: bool| on.then(|| named(name, raw("true")));
@@ -318,6 +349,20 @@ impl Flutter<'_> {
                 Expr::List(values.iter().map(|v| string(v)).collect()),
             ));
         }
+        let options = field_options(self.model, shown);
+        args.extend(options.max.map(|max| named("max", raw(max.to_string()))));
+        args.extend(options.currency.map(|c| named("currency", string(c))));
+        args.extend(
+            options
+                .max_size
+                .map(|size| named("maxSize", raw(size.to_string()))),
+        );
+        if !options.accept.is_empty() {
+            args.push(named(
+                "accept",
+                Expr::List(options.accept.iter().map(|a| string(a)).collect()),
+            ));
+        }
         call("ColumnSchema", args)
     }
 
@@ -329,18 +374,13 @@ impl Flutter<'_> {
             .tables()
             .first()
             .map_or_else(String::new, |t| Names::class_of(&t.name));
-        let mut out = format!(
-            "{HEADER}\n// Modèles typés des tables, pour le code personnalisé :\n\
-             //   final listing = await {example}.api(client).list();\n\n\
-             import 'package:decimal/decimal.dart';\n\
-             {IMPORT}"
-        );
+        let mut body = String::new();
         // Une énumération par colonne `enum` (les lookups réutilisent celle de
         // la colonne lue).
         let mut enums = String::new();
         for table in &self.model.spec().tables {
-            out.push('\n');
-            out.push_str(&self.model_class(table, names));
+            body.push('\n');
+            body.push_str(&self.model_class(table, names));
             for column in &table.columns {
                 if column.ty == ColumnType::Enum {
                     enums.push('\n');
@@ -351,7 +391,13 @@ impl Flutter<'_> {
                 }
             }
         }
-        out + &enums
+        body += &enums;
+        format!(
+            "{HEADER}\n// Modèles typés des tables, pour le code personnalisé :\n\
+             //   final listing = await {example}.api(client).list();\n\n\
+             {}{body}",
+            model_imports(&body)
+        )
     }
 
     fn model_class(&self, table: &Table, names: &Names) -> String {
@@ -452,7 +498,7 @@ impl Flutter<'_> {
     }
 
     fn field(&self, table: &Table, column: &Column, names: &Names) -> Field {
-        let (owner, shown) = shown(self.model, &table.name, column);
+        let (owner, shown) = self.model.resolved(&table.name, column);
         let dart = Names::field(&column.name);
         let key = format!("json[{}]", quote(&column.name));
         // Une liste vide remplace `null` ; une colonne requise saisie n'est jamais nulle.
@@ -460,45 +506,51 @@ impl Flutter<'_> {
             (!column.required || column.is_computed()) && shown.ty != ColumnType::ReferenceList;
         let bang = if nullable { "" } else { "!" };
         let q = if nullable { "?" } else { "" };
-        let (ty, decode, encode) = match shown.ty {
-            ColumnType::String | ColumnType::Text => {
+        // Un modèle de champ prend le type Dart de son type de base, sauf les fichiers.
+        let (ty, decode, encode) = match (shown.ty, shown.ty.base()) {
+            (ColumnType::File | ColumnType::Image, _) => (
+                "ForgeFile".into(),
+                format!("ForgeFile.fromJson({key}){bang}"),
+                format!("{dart}{q}.id"),
+            ),
+            (_, ColumnType::String | ColumnType::Text) => {
                 ("String".into(), format!("{key} as String{q}"), dart.clone())
             }
-            ColumnType::Integer | ColumnType::Reference => {
+            (_, ColumnType::Integer | ColumnType::Reference) => {
                 ("int".into(), format!("{key} as int{q}"), dart.clone())
             }
-            ColumnType::Boolean => ("bool".into(), format!("{key} as bool{q}"), dart.clone()),
-            ColumnType::Decimal => (
+            (_, ColumnType::Boolean) => ("bool".into(), format!("{key} as bool{q}"), dart.clone()),
+            (_, ColumnType::Decimal) => (
                 "Decimal".into(),
                 format!("jsonToDecimal({key}){bang}"),
                 format!("decimalToJson({dart})"),
             ),
-            ColumnType::Date => (
+            (_, ColumnType::Date) => (
                 "DateTime".into(),
                 format!("jsonToDate({key}){bang}"),
                 format!("dateToJson({dart})"),
             ),
-            ColumnType::Datetime => (
+            (_, ColumnType::Datetime) => (
                 "DateTime".into(),
                 format!("jsonToDateTime({key}){bang}"),
                 format!("dateTimeToJson({dart})"),
             ),
-            ColumnType::Duration => (
+            (_, ColumnType::Duration) => (
                 "Duration".into(),
                 format!("jsonToDuration({key}){bang}"),
                 format!("durationToJson({dart})"),
             ),
-            ColumnType::Enum => {
+            (_, ColumnType::Enum) => {
                 let ty = names.enumeration(owner, &shown.name);
                 let decode = format!("{ty}.fromJson({key}){bang}");
                 (ty, decode, format!("{dart}{q}.value"))
             }
-            ColumnType::ReferenceList => (
+            (_, ColumnType::ReferenceList) => (
                 "List<int>".into(),
                 format!("jsonToIds({key})"),
                 dart.clone(),
             ),
-            ColumnType::Lookup => ("Object".into(), key, dart.clone()),
+            _ => ("Object".into(), key, dart.clone()),
         };
         Field {
             json: column.name.clone(),
@@ -514,24 +566,31 @@ impl Flutter<'_> {
     fn sample(&self, table: &Table) -> Expr {
         let mut entries = vec![(string("id"), raw("1"))];
         for column in &table.columns {
-            let (_, shown) = shown(self.model, &table.name, column);
-            let value = match shown.ty {
-                ColumnType::String | ColumnType::Text => string("texte"),
-                ColumnType::Integer | ColumnType::Reference => raw("2"),
-                ColumnType::Decimal => string("1234.5"),
-                ColumnType::Boolean => raw("true"),
-                ColumnType::Date => string("2026-01-02"),
-                ColumnType::Datetime => string("2026-01-02T03:04:05.000Z"),
-                ColumnType::Duration => raw("5400"),
-                ColumnType::Enum => string(
+            let (_, shown) = self.model.resolved(&table.name, column);
+            let value = match (shown.ty, shown.ty.base()) {
+                (ColumnType::File | ColumnType::Image, _) => Expr::Map(vec![
+                    (string("id"), string("0b9f3c1e-5d2a-4c4e-9a8b-1f2e3d4c5b6a")),
+                    (string("name"), string("fichier.png")),
+                    (string("size"), raw("1024")),
+                    (string("content_type"), string("image/png")),
+                    (string("url"), string("/api/files/0b9f3c1e")),
+                ]),
+                (_, ColumnType::String | ColumnType::Text) => string("texte"),
+                (_, ColumnType::Integer | ColumnType::Reference) => raw("2"),
+                (_, ColumnType::Decimal) => string("1234.5"),
+                (_, ColumnType::Boolean) => raw("true"),
+                (_, ColumnType::Date) => string("2026-01-02"),
+                (_, ColumnType::Datetime) => string("2026-01-02T03:04:05.000Z"),
+                (_, ColumnType::Duration) => raw("5400"),
+                (_, ColumnType::Enum) => string(
                     shown
                         .values
                         .as_ref()
                         .and_then(|v| v.first())
                         .map_or("", String::as_str),
                 ),
-                ColumnType::ReferenceList => Expr::List(vec![raw("2"), raw("3")]),
-                ColumnType::Lookup => raw("null"),
+                (_, ColumnType::ReferenceList) => Expr::List(vec![raw("2"), raw("3")]),
+                _ => raw("null"),
             };
             entries.push((string(&column.name), value));
         }
@@ -682,5 +741,20 @@ mod tests {
         assert_eq!(escape(camel_case("to_json")), "toJsonValue");
         assert_eq!(escape(camel_case("date_cloture")), "dateCloture");
         assert_eq!(escape(camel_case("default")), "defaultValue");
+    }
+
+    #[test]
+    fn model_imports_list_only_used_names() {
+        let body = "TableClient<Note> api(ForgeClient c) => …; String? titre;";
+        assert_eq!(
+            model_imports(body),
+            "import 'package:forge_flutter/forge_flutter.dart'\n    show ForgeClient, TableClient;\n"
+        );
+        let body = "Decimal? montant; jsonToDecimal(x); ForgeClient; TableClient; \
+                    ForgeFile; jsonToDate(y); dateToJson(z); jsonToIds(w);";
+        let imports = model_imports(body);
+        assert!(imports.starts_with("import 'package:decimal/decimal.dart';\n"));
+        assert!(imports.contains("    show\n        ForgeClient,\n        ForgeFile,\n"));
+        assert!(!uses("jsonToDateTime(x)", "jsonToDate"));
     }
 }

@@ -114,6 +114,8 @@ fn cell(value: &JsonValue) -> String {
         JsonValue::Null => String::new(),
         JsonValue::String(s) => s.clone(),
         JsonValue::Array(items) => items.iter().map(cell).collect::<Vec<_>>().join(","),
+        // Fichier : son identifiant, réimportable.
+        JsonValue::Object(file) => file.get("id").map_or_else(String::new, cell),
         other => other.to_string(),
     }
 }
@@ -264,7 +266,7 @@ fn to_json(column: &Column, text: &str) -> Result<JsonValue, String> {
             .map_err(|_| "identifiants entiers séparés par des virgules attendus".to_owned());
     }
     Ok(
-        match value::from_text(column.ty, column.values.as_deref(), text)? {
+        match value::from_text(column.ty, value::Domain::of(column), text)? {
             TypedValue::Null => JsonValue::Null,
             TypedValue::String(s) => json!(s),
             TypedValue::Integer(n) => json!(n),

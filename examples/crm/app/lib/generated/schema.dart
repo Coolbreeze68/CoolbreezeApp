@@ -48,26 +48,46 @@ const schema = AppSchema(
         ),
         ColumnSchema(
           'site_web',
-          ColumnType.string,
+          ColumnType.url,
           label: Label({'en': 'Website', 'fr': 'Site web'}),
         ),
         ColumnSchema(
+          'logo',
+          ColumnType.image,
+          label: Label({'en': 'Logo', 'fr': 'Logo'}),
+          maxSize: 2,
+        ),
+        ColumnSchema(
+          'satisfaction',
+          ColumnType.rating,
+          label: Label({'en': 'Satisfaction', 'fr': 'Satisfaction'}),
+          max: 5,
+        ),
+        ColumnSchema(
           'chiffre_affaires',
-          ColumnType.decimal,
+          ColumnType.money,
           label: Label({'en': 'Revenue', 'fr': 'Chiffre d\'affaires'}),
+          currency: 'EUR',
+        ),
+        ColumnSchema(
+          'presentation',
+          ColumnType.markdown,
+          label: Label({'en': 'Overview', 'fr': 'Présentation'}),
         ),
         ColumnSchema(
           'pipeline',
-          ColumnType.decimal,
+          ColumnType.money,
           label: Label({'en': 'Pipeline', 'fr': 'Pipeline'}),
           computed: true,
+          currency: 'EUR',
         ),
         ColumnSchema(
           'pipeline_pondere',
-          ColumnType.decimal,
+          ColumnType.money,
           label: Label({'en': 'Weighted pipeline', 'fr': 'Pipeline pondéré'}),
           computed: true,
           stored: false,
+          currency: 'EUR',
         ),
         ColumnSchema(
           'nb_contacts',
@@ -117,14 +137,20 @@ const schema = AppSchema(
         ),
         ColumnSchema(
           'email',
-          ColumnType.string,
+          ColumnType.email,
           label: Label({'en': 'Email', 'fr': 'E-mail'}),
           unique: true,
         ),
         ColumnSchema(
           'telephone',
-          ColumnType.string,
+          ColumnType.phone,
           label: Label({'en': 'Phone', 'fr': 'Téléphone'}),
+        ),
+        ColumnSchema(
+          'photo',
+          ColumnType.image,
+          label: Label({'en': 'Photo', 'fr': 'Photo'}),
+          maxSize: 2,
         ),
         ColumnSchema(
           'poste',
@@ -205,9 +231,10 @@ const schema = AppSchema(
         ),
         ColumnSchema(
           'montant',
-          ColumnType.decimal,
+          ColumnType.money,
           label: Label({'en': 'Amount', 'fr': 'Montant HT'}),
           required: true,
+          currency: 'EUR',
         ),
         ColumnSchema(
           'probabilite',
@@ -217,15 +244,17 @@ const schema = AppSchema(
         ),
         ColumnSchema(
           'montant_pondere',
-          ColumnType.decimal,
+          ColumnType.money,
           label: Label({'en': 'Weighted amount', 'fr': 'Montant pondéré'}),
           computed: true,
+          currency: 'EUR',
         ),
         ColumnSchema(
           'montant_ttc',
-          ColumnType.decimal,
+          ColumnType.money,
           label: Label({'en': 'Amount incl. VAT', 'fr': 'Montant TTC'}),
           computed: true,
+          currency: 'EUR',
         ),
         ColumnSchema(
           'etape',
@@ -252,6 +281,13 @@ const schema = AppSchema(
           label: Label({'en': 'Tags', 'fr': 'Étiquettes'}),
           stored: false,
           target: 'tag',
+        ),
+        ColumnSchema(
+          'devis',
+          ColumnType.file,
+          label: Label({'en': 'Quote', 'fr': 'Devis'}),
+          maxSize: 5,
+          accept: ['.pdf', '.docx', '.odt'],
         ),
         ColumnSchema(
           'notes_internes',
@@ -334,7 +370,7 @@ const schema = AppSchema(
         ),
         ColumnSchema(
           'compte_rendu',
-          ColumnType.text,
+          ColumnType.markdown,
           label: Label({'en': 'Report', 'fr': 'Compte rendu'}),
         ),
       ],
@@ -373,9 +409,9 @@ const schema = AppSchema(
         ),
         ColumnSchema(
           'couleur',
-          ColumnType.string,
+          ColumnType.color,
           label: Label({'en': 'Color', 'fr': 'Couleur'}),
-          defaultValue: '#607D8B',
+          defaultValue: '#607d8b',
         ),
         ColumnSchema(
           'nb_opportunites',

@@ -12,7 +12,7 @@ use serde_json::{Map, Value as JsonValue, json};
 
 use crate::dart::camel_case;
 use crate::error::Error;
-use crate::frontend::{operations, shown};
+use crate::frontend::{field_options, operations};
 use crate::render::Renderer;
 use crate::writer::{OutputFile, Policy};
 
@@ -178,7 +178,7 @@ impl Web<'_> {
     }
 
     fn column(&self, table: &str, column: &Column) -> JsonValue {
-        let (_, displayed) = shown(self.model, table, column);
+        let (_, displayed) = self.model.resolved(table, column);
         let mut out = Map::new();
         out.insert("name".into(), json!(column.name));
         out.insert("type".into(), json!(displayed.ty.name()));
@@ -210,6 +210,19 @@ impl Web<'_> {
         if let Some(values) = &displayed.values {
             out.insert("values".into(), json!(values));
         }
+        let options = field_options(self.model, displayed);
+        if let Some(max) = options.max {
+            out.insert("max".into(), json!(max));
+        }
+        if let Some(currency) = options.currency {
+            out.insert("currency".into(), json!(currency));
+        }
+        if let Some(max_size) = options.max_size {
+            out.insert("max_size".into(), json!(max_size));
+        }
+        if !options.accept.is_empty() {
+            out.insert("accept".into(), json!(options.accept));
+        }
         JsonValue::Object(out)
     }
 
@@ -225,7 +238,7 @@ impl Web<'_> {
         let mut out = format!(
             "{HEADER}\n// Types des enregistrements, tels que l'API les envoie, pour le code\n\
              // personnalisé :\n//   const listing = await {example}(client).list();\n\n\
-             import {{ type ForgeClient, type Json, TableClient }} from '@forge/web';\n"
+             import {{ type ForgeClient, type ForgeFile, type Json, TableClient }} from '@forge/web';\n"
         );
         for table in tables {
             out.push('\n');
@@ -243,14 +256,26 @@ impl Web<'_> {
             table.name
         );
         for column in &table.columns {
-            let (owner, displayed) = shown(self.model, &table.name, column);
+            let (owner, displayed) = self.model.resolved(&table.name, column);
             let ty = match displayed.ty {
-                ColumnType::String | ColumnType::Text => "string".to_owned(),
+                ColumnType::File | ColumnType::Image => "ForgeFile".to_owned(),
                 // Décimaux, dates et dates-heures : texte de l'API.
-                ColumnType::Decimal | ColumnType::Date | ColumnType::Datetime => {
+                ty if matches!(
+                    ty.base(),
+                    ColumnType::String
+                        | ColumnType::Text
+                        | ColumnType::Decimal
+                        | ColumnType::Date
+                        | ColumnType::Datetime
+                ) =>
+                {
                     "string".to_owned()
                 }
-                ColumnType::Integer | ColumnType::Duration | ColumnType::Reference => {
+                ty if matches!(
+                    ty.base(),
+                    ColumnType::Integer | ColumnType::Duration | ColumnType::Reference
+                ) =>
+                {
                     "number".to_owned()
                 }
                 ColumnType::Boolean => "boolean".to_owned(),
@@ -270,7 +295,7 @@ impl Web<'_> {
                     }
                     enum_name
                 }
-                ColumnType::Lookup => "unknown".to_owned(),
+                _ => "unknown".to_owned(),
             };
             let nullable = (!column.required || column.is_computed())
                 && displayed.ty != ColumnType::ReferenceList;
@@ -312,9 +337,7 @@ fn label_json(label: &Label) -> JsonValue {
 fn type_name(table: &str) -> String {
     let name = pascal_case(table);
     if GLOBAL_TYPES.contains(&name.as_str())
-        || name == "TableClient"
-        || name == "ForgeClient"
-        || name == "Json"
+        || ["TableClient", "ForgeClient", "ForgeFile", "Json"].contains(&name.as_str())
     {
         name + "Record"
     } else {

@@ -17,15 +17,19 @@ use std::collections::BTreeMap;
 use sea_orm::{ConnectionTrait, DbBackend};
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::schema::{
-    big_integer, big_integer_null, big_pk_auto, boolean, string, string_null, text_null,
-    timestamp_with_time_zone,
+    big_integer, big_integer_null, big_pk_auto, boolean, string, string_len, string_null,
+    text_null, timestamp_with_time_zone,
 };
 
 use crate::links;
 
 /// Migrations système, à placer avant celles de l'application.
 pub fn system() -> Vec<Box<dyn MigrationTrait>> {
-    vec![Box::new(SystemTables), Box::new(AuthTables)]
+    vec![
+        Box::new(SystemTables),
+        Box::new(AuthTables),
+        Box::new(FileTables),
+    ]
 }
 
 /// Effet de la suppression d'une ligne référencée.
@@ -837,6 +841,53 @@ impl MigrationTrait for AuthTables {
                 .await?;
         }
         Ok(())
+    }
+}
+
+/// Fichiers téléversés (colonnes `file` et `image`) : métadonnées et rattachement.
+struct FileTables;
+
+impl MigrationName for FileTables {
+    fn name(&self) -> &'static str {
+        "forge_0003_files"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for FileTables {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("forge_files"))
+                    .col(string_len("id", 36).primary_key())
+                    .col(string("name"))
+                    .col(string("content_type"))
+                    .col(big_integer("size"))
+                    .col(big_integer_null("uploaded_by"))
+                    .col(string_null("table_name"))
+                    .col(string_null("column_name"))
+                    .col(big_integer_null("record_id"))
+                    .col(timestamp_with_time_zone("created_at"))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("ix_forge_files_record")
+                    .table(Alias::new("forge_files"))
+                    .col(Alias::new("table_name"))
+                    .col(Alias::new("record_id"))
+                    .to_owned(),
+            )
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(Alias::new("forge_files")).to_owned())
+            .await
     }
 }
 

@@ -78,6 +78,7 @@ impl Storage {
             ColumnType::Date => Self::Date,
             ColumnType::Datetime => Self::Timestamp,
             ColumnType::ReferenceList | ColumnType::Lookup => return None,
+            model => return Self::of(model.base()),
         })
     }
 }
@@ -166,6 +167,7 @@ mod tests {
                 "montant_ttc",
                 "etape",
                 "date_cloture",
+                "devis",
                 "notes_internes"
             ]
         );

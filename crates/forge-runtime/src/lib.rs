@@ -13,6 +13,7 @@ mod columns;
 mod compute;
 mod csv_io;
 mod error;
+mod files;
 mod graphql;
 pub mod hooks;
 mod links;
@@ -29,7 +30,8 @@ mod rules;
 pub mod testing;
 mod values;
 
-pub use app::{App, AppState, DEFAULT_CACHE_CAPACITY, DEFAULT_CACHE_TTL};
+pub use app::{App, AppState, DEFAULT_CACHE_CAPACITY, DEFAULT_CACHE_TTL, DEFAULT_UPLOAD_DIR};
+pub use files::{DiskStorage, Storage};
 
 /// Valeurs et types des formules, pour implémenter des fonctions personnalisées.
 /// Valeurs manipulées par les fonctions de formule personnalisées.

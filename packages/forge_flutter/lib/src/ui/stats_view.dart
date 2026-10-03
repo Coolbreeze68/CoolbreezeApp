@@ -1,3 +1,4 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
 import '../api/query.dart';
@@ -150,9 +151,16 @@ class _StatsPanelState extends State<StatsPanel> {
 /// Valeur d'une mesure, mise en forme selon la colonne (moyennes au centième).
 String formatMeasure(Forge forge, ColumnSchema column, num? value) {
   if (value == null) return '–';
-  return column.type == ColumnType.duration
-      ? forge.format.duration(Duration(seconds: value.round()))
-      : forge.format.number((value * 100).round() / 100);
+  final format = forge.format;
+  return switch (column.type) {
+    ColumnType.duration => format.duration(Duration(seconds: value.round())),
+    ColumnType.percent => format.percent(Decimal.parse('$value')),
+    ColumnType.money => format.money(
+      Decimal.parse('$value'),
+      column.currency ?? 'EUR',
+    ),
+    _ => format.number((value * 100).round() / 100),
+  };
 }
 
 /// Cartes disposées en colonnes, autant que la largeur le permet.

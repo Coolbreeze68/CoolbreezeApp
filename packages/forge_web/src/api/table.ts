@@ -1,4 +1,5 @@
 import type { ForgeClient, Json } from './client';
+import type { ForgeFile } from './file';
 import { type ListQuery, type Listing, MAX_PER_PAGE, pageCount, queryParameters } from './query';
 
 /** Bilan d'un import CSV réussi. */
@@ -134,5 +135,14 @@ export class TableClient<T> {
   /** Import CSV, tout ou rien ; une erreur détaille les lignes refusées. */
   async import(csv: Blob): Promise<ImportReport> {
     return (await this.client.postRaw(`${this.path}/import`, csv)) as ImportReport;
+  }
+
+  /** Téléverse un fichier pour la colonne `file` ou `image` ; son `id` s'écrit ensuite dans la colonne. */
+  async upload(column: string, file: File): Promise<ForgeFile> {
+    return (await this.client.postRaw('/api/files', file, file.type || 'application/octet-stream', {
+      table: this.table,
+      column,
+      name: file.name,
+    })) as ForgeFile;
   }
 }

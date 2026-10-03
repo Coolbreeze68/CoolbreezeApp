@@ -28,8 +28,26 @@
           "unique": false
         },
         {
+          "name": "logo",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "satisfaction",
+          "storage": "big_integer",
+          "nullable": true,
+          "unique": false
+        },
+        {
           "name": "chiffre_affaires",
           "storage": "decimal",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "presentation",
+          "storage": "text",
           "nullable": true,
           "unique": false
         },
@@ -64,6 +82,12 @@
         },
         {
           "name": "telephone",
+          "storage": "string",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "photo",
           "storage": "string",
           "nullable": true,
           "unique": false
@@ -145,6 +169,12 @@
         {
           "name": "date_cloture",
           "storage": "date",
+          "nullable": true,
+          "unique": false
+        },
+        {
+          "name": "devis",
+          "storage": "string",
           "nullable": true,
           "unique": false
         },

@@ -2,6 +2,7 @@
 import type { ForgeStrings } from './i18n';
 import type { ColumnSchema, Label, TableSchema } from './schema';
 import { titleColumns } from './schema';
+import { isForgeFile } from './api/file';
 
 // ------------------------------------------------------------- JSON → JS
 
@@ -39,6 +40,48 @@ export function parseDecimalInput(input: string): string | null {
   return normalized.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
+/** Pourcentage saisi (`12,5` pour 12,5 %) → proportion au format de l'API (`"0.125"`). */
+export function parsePercentInput(input: string): string | null {
+  const percent = parseDecimalInput(input);
+  return percent === null ? null : shiftDecimal(percent, -2);
+}
+
+/** Proportion de l'API (`"0.125"`) → pourcentage saisi (`"12.5"`). */
+export const percentText = (ratio: string) => shiftDecimal(ratio, 2);
+
+/** Décale la virgule d'un décimal en texte, sans arrondi binaire. */
+function shiftDecimal(text: string, places: number): string {
+  const negative = text.startsWith('-');
+  const [whole, fraction = ''] = text.replace('-', '').split('.');
+  let digits = whole + fraction;
+  let point = whole.length + places;
+  if (point < 0) {
+    digits = '0'.repeat(-point) + digits;
+    point = 0;
+  }
+  digits = digits.padEnd(point, '0');
+  const integer = digits.slice(0, point).replace(/^0+(?=\d)/, '') || '0';
+  const rest = digits.slice(point).replace(/0+$/, '');
+  return `${negative ? '-' : ''}${integer}${rest ? `.${rest}` : ''}`;
+}
+
+/**
+ * Saisie plausible pour une colonne `email`, `url` ou `phone` (le serveur fait
+ * foi ; ce contrôle évite un aller-retour pour une faute évidente).
+ */
+export function isValidInput(type: string, text: string): boolean {
+  switch (type) {
+    case 'email':
+      return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(text);
+    case 'url':
+      return /^https?:\/\/[^\s/?#]+\S*$/.test(text);
+    case 'phone':
+      return /^\+?[\d\s().-]+$/.test(text) && (text.match(/\d/g) ?? []).length >= 6;
+    default:
+      return true;
+  }
+}
+
 /** Entier saisi par l'utilisateur, espaces de groupement tolérés. */
 export function parseIntegerInput(input: string): number | null {
   const normalized = input.replace(/[\s\u00a0\u202f]/g, '');
@@ -63,6 +106,8 @@ export class ValueFormat {
   private readonly dateFormat: Intl.DateTimeFormat;
   private readonly dateTimeFormat: Intl.DateTimeFormat;
   private readonly timeFormat: Intl.DateTimeFormat;
+  private readonly percentFormat: Intl.NumberFormat;
+  private readonly currencies = new Map<string, Intl.NumberFormat>();
 
   constructor(
     readonly locale: string,
@@ -76,6 +121,7 @@ export class ValueFormat {
     this.dateFormat = new Intl.DateTimeFormat(tag, { dateStyle: 'short' });
     this.dateTimeFormat = new Intl.DateTimeFormat(tag, { dateStyle: 'short', timeStyle: 'short' });
     this.timeFormat = new Intl.DateTimeFormat(tag, { timeStyle: 'short' });
+    this.percentFormat = new Intl.NumberFormat(tag, { style: 'percent', maximumFractionDigits: 2 });
   }
 
   label(label: Label | undefined, name: string): string {
@@ -104,6 +150,41 @@ export class ValueFormat {
 
   time = (value: Date) => this.timeFormat.format(value);
 
+  /** Proportion en pourcentage : `0.255` → `25,5 %`. */
+  percent = (ratio: number) => this.percentFormat.format(ratio);
+
+  /** Montant dans la devise `currency` : `1 500,00 €`. */
+  money(value: number, currency: string): string {
+    let format = this.currencies.get(currency);
+    if (!format) {
+      format = new Intl.NumberFormat(this.locale.replace('_', '-'), { style: 'currency', currency });
+      this.currencies.set(currency, format);
+    }
+    return format.format(value);
+  }
+
+  /** Symbole de la devise : `€`, `$`. */
+  currencySymbol(currency: string): string {
+    return (
+      new Intl.NumberFormat(this.locale.replace('_', '-'), { style: 'currency', currency })
+        .formatToParts(0)
+        .find((p) => p.type === 'currency')?.value ?? currency
+    );
+  }
+
+  /** Taille de fichier : `820 o`, `12 Ko`, `3,4 Mo`. */
+  fileSize(bytes: number): string {
+    const units = this.strings.sizeUnits;
+    let size = bytes;
+    let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    const shown = unit === 0 || size >= 10 ? Math.round(size) : Math.round(size * 10) / 10;
+    return `${this.number(shown)} ${units[unit]}`;
+  }
+
   /** `1 h 30`, `45 min`, `2 h`. */
   duration(seconds: number): string {
     const negative = seconds < 0;
@@ -126,6 +207,19 @@ export class ValueFormat {
         const n = Number(json);
         return Number.isNaN(n) ? String(json) : this.number(n);
       }
+      case 'percent': {
+        const n = Number(json);
+        return Number.isNaN(n) ? String(json) : this.percent(n);
+      }
+      case 'money': {
+        const n = Number(json);
+        return Number.isNaN(n) ? String(json) : this.money(n, column.currency ?? 'EUR');
+      }
+      case 'rating':
+        return `${String(json)}/${column.max ?? 5}`;
+      case 'file':
+      case 'image':
+        return isForgeFile(json) ? json.name : '';
       case 'boolean':
         return json === true ? this.strings.yes : this.strings.no;
       case 'date': {

@@ -6,7 +6,7 @@
 // personnalisé :
 //   const listing = await entrepriseApi(client).list();
 
-import { type ForgeClient, type Json, TableClient } from '@forge/web';
+import { type ForgeClient, type ForgeFile, type Json, TableClient } from '@forge/web';
 
 /** Entreprise (table `entreprise`). */
 export interface Entreprise {
@@ -15,7 +15,10 @@ export interface Entreprise {
   secteur: EntrepriseSecteur | null;
   ville: string | null;
   site_web: string | null;
+  logo: ForgeFile | null;
+  satisfaction: number | null;
   chiffre_affaires: string | null;
+  presentation: string | null;
   pipeline: string | null;
   pipeline_pondere: string | null;
   nb_contacts: number | null;
@@ -37,6 +40,7 @@ export interface Contact {
   nom: string;
   email: string | null;
   telephone: string | null;
+  photo: ForgeFile | null;
   poste: string | null;
   entreprise: number | null;
   secteur: EntrepriseSecteur | null;
@@ -65,6 +69,7 @@ export interface Opportunite {
   date_cloture: string | null;
   jours_restants: number | null;
   tags: number[];
+  devis: ForgeFile | null;
   notes_internes: string | null;
   owner: number | null;
   created_at: string;

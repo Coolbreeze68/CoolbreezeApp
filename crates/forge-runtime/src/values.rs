@@ -31,5 +31,6 @@ fn null(ty: ColumnType) -> Value {
         ColumnType::Boolean => Option::<bool>::None.into(),
         ColumnType::Date => Option::<Date>::None.into(),
         ColumnType::Datetime => Option::<DateTimeUtc>::None.into(),
+        model => null(model.base()),
     }
 }

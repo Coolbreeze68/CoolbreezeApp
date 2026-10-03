@@ -2,12 +2,15 @@
 /// format JSON de l'API ; une saisie illisible est signalée par [InvalidInput].
 library;
 
+import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../customization.dart';
 import '../forge.dart';
 import '../schema.dart';
 import '../values.dart';
+import 'field_models.dart';
 import 'reference_picker.dart';
 import 'widgets.dart';
 
@@ -30,20 +33,18 @@ Widget buildField(BuildContext context, FieldState field) {
     ColumnType.enumeration => _EnumField(field),
     ColumnType.reference => _ReferenceField(field),
     ColumnType.referenceList => _ReferenceListField(field),
+    ColumnType.color => ColorField(field),
+    ColumnType.rating => RatingField(field),
+    ColumnType.markdown => MarkdownField(field),
+    ColumnType.file || ColumnType.image => FileField(field),
     _ => _TextInputField(field),
   };
 }
 
-InputDecoration _decoration(BuildContext context, FieldState field) {
-  final format = Forge.of(context).format;
-  final label = format.columnLabel(field.column);
-  return InputDecoration(
-    labelText: field.column.required ? '$label *' : label,
-    errorText: field.error,
-  );
-}
+const _decoration = fieldDecoration;
 
-/// Texte, entiers, décimaux et durées (`h:mm`, ou un nombre de minutes).
+/// Saisies au clavier : texte (dont e-mail, adresse web, téléphone), nombres,
+/// pourcentages, montants et durées (`h:mm`, ou un nombre de minutes).
 class _TextInputField extends StatefulWidget {
   const _TextInputField(this.field);
 
@@ -65,6 +66,10 @@ class _TextInputFieldState extends State<_TextInputField> {
     (InvalidInput(:final text), _) => text,
     (final int seconds, ColumnType.duration) =>
       '${seconds ~/ 3600}:${(seconds % 3600 ~/ 60).toString().padLeft(2, '0')}',
+    (final v, ColumnType.percent) => switch (jsonToDecimal(v)) {
+      final ratio? => (ratio * Decimal.fromInt(100)).toString(),
+      null => '$v',
+    },
     (final v, _) => '$v',
   };
 
@@ -74,6 +79,11 @@ class _TextInputFieldState extends State<_TextInputField> {
       ColumnType.integer => parseIntegerInput(text),
       ColumnType.decimal => parseDecimalInput(text),
       ColumnType.duration => _parseDuration(text.trim()),
+      ColumnType.money => parseDecimalInput(text),
+      ColumnType.percent => parsePercentInput(text),
+      ColumnType.email ||
+      ColumnType.url ||
+      ColumnType.phone => isValidInput(_type, text.trim()) ? text.trim() : null,
       _ => text,
     };
     return parsed ?? InvalidInput(text);
@@ -96,29 +106,51 @@ class _TextInputFieldState extends State<_TextInputField> {
 
   @override
   Widget build(BuildContext context) {
+    final forge = Forge.of(context);
     final multiline = _type == ColumnType.text;
     return TextField(
       controller: _controller,
       decoration: _decoration(context, widget.field).copyWith(
         helperText: _type == ColumnType.duration
-            ? Forge.of(context).strings.durationHint
+            ? forge.strings.durationHint
             : null,
+        suffixText: switch (_type) {
+          ColumnType.percent => '%',
+          ColumnType.money => NumberFormat.simpleCurrency(
+            locale: forge.locale,
+            name: widget.field.column.currency,
+          ).currencySymbol,
+          _ => null,
+        },
+        prefixIcon: switch (_type) {
+          ColumnType.email => const Icon(Icons.mail_outline),
+          ColumnType.url => const Icon(Icons.link),
+          ColumnType.phone => const Icon(Icons.phone_outlined),
+          _ => null,
+        },
       ),
       keyboardType: switch (_type) {
         ColumnType.integer => const TextInputType.numberWithOptions(
           signed: true,
         ),
-        ColumnType.decimal => const TextInputType.numberWithOptions(
-          signed: true,
-          decimal: true,
-        ),
+        ColumnType.decimal || ColumnType.percent || ColumnType.money =>
+          const TextInputType.numberWithOptions(signed: true, decimal: true),
         ColumnType.duration => TextInputType.datetime,
+        ColumnType.email => TextInputType.emailAddress,
+        ColumnType.url => TextInputType.url,
+        ColumnType.phone => TextInputType.phone,
         _ when multiline => TextInputType.multiline,
         _ => TextInputType.text,
       },
       minLines: multiline ? 3 : 1,
       maxLines: multiline ? 8 : 1,
-      maxLength: _type == ColumnType.string ? 255 : null,
+      maxLength: switch (_type) {
+        ColumnType.string ||
+        ColumnType.email ||
+        ColumnType.url ||
+        ColumnType.phone => 255,
+        _ => null,
+      },
       buildCounter: _hideCounter,
       onChanged: (text) => widget.field.onChanged(_parse(text)),
     );
@@ -257,13 +289,23 @@ class _ReferenceField extends StatelessWidget {
       },
       child: InputDecorator(
         decoration: _decoration(context, field).copyWith(
-          suffixIcon: id == null || field.column.required
-              ? const Icon(Icons.arrow_drop_down)
-              : IconButton(
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CreateReferenceButton(table: target, onCreated: field.onChanged),
+              if (id == null || field.column.required)
+                const Padding(
+                  padding: EdgeInsets.only(right: 12),
+                  child: Icon(Icons.arrow_drop_down),
+                )
+              else
+                IconButton(
                   tooltip: forge.strings.clear,
                   icon: const Icon(Icons.clear),
                   onPressed: () => field.onChanged(null),
                 ),
+            ],
+          ),
         ),
         isEmpty: id == null,
         child: id == null ? const Text('') : RecordTitle(target.name, id),
@@ -308,6 +350,10 @@ class _ReferenceListField extends StatelessWidget {
               if (picked != null) field.onChanged(picked);
             },
           ),
+          CreateReferenceButton(
+            table: target,
+            onCreated: (id) => field.onChanged([...ids, id]),
+          ),
         ],
       ),
     );
@@ -319,6 +365,7 @@ Object? parseInitialValue(ColumnSchema column, String text) =>
     switch (column.type) {
       ColumnType.integer ||
       ColumnType.duration ||
+      ColumnType.rating ||
       ColumnType.reference => int.tryParse(text),
       ColumnType.boolean => text == 'true',
       ColumnType.referenceList => [

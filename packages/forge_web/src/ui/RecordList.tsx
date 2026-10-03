@@ -9,7 +9,7 @@ import { type ListQuery, pageCount, queryKey, type Sort } from '../api/query';
 import { useForge } from '../context';
 import { useAsync } from '../hooks';
 import { paths } from '../paths';
-import { isNumeric, type TableSchema, visibleColumns } from '../schema';
+import { isFile, isNumeric, type TableSchema, visibleColumns } from '../schema';
 import { Empty, ErrorView, Loading, Pager, ValueView } from './common';
 
 /** Initiales d'un intitulé, pour l'avatar des tuiles. */
@@ -125,7 +125,7 @@ export function RecordList({
           <Table.Thead>
             <Table.Tr>
               {columns.map((c) => {
-                const sortable = !c.virtual && onSort;
+                const sortable = !c.virtual && !isFile(c.type) && onSort;
                 const active = sorted?.column === c.name;
                 const Icon = !active ? IconSelector : sorted?.descending ? IconChevronDown : IconChevronUp;
                 return (

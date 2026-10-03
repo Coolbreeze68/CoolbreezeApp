@@ -77,33 +77,62 @@ export const schema: AppSchema = {
             "fr": "Site web"
           },
           "name": "site_web",
-          "type": "string"
+          "type": "url"
         },
         {
+          "label": {
+            "en": "Logo",
+            "fr": "Logo"
+          },
+          "max_size": 2,
+          "name": "logo",
+          "type": "image"
+        },
+        {
+          "label": {
+            "en": "Satisfaction",
+            "fr": "Satisfaction"
+          },
+          "max": 5,
+          "name": "satisfaction",
+          "type": "rating"
+        },
+        {
+          "currency": "EUR",
           "label": {
             "en": "Revenue",
             "fr": "Chiffre d'affaires"
           },
           "name": "chiffre_affaires",
-          "type": "decimal"
+          "type": "money"
+        },
+        {
+          "label": {
+            "en": "Overview",
+            "fr": "Présentation"
+          },
+          "name": "presentation",
+          "type": "markdown"
         },
         {
           "computed": true,
+          "currency": "EUR",
           "label": {
             "en": "Pipeline",
             "fr": "Pipeline"
           },
           "name": "pipeline",
-          "type": "decimal"
+          "type": "money"
         },
         {
           "computed": true,
+          "currency": "EUR",
           "label": {
             "en": "Weighted pipeline",
             "fr": "Pipeline pondéré"
           },
           "name": "pipeline_pondere",
-          "type": "decimal",
+          "type": "money",
           "virtual": true
         },
         {
@@ -188,7 +217,7 @@ export const schema: AppSchema = {
             "fr": "E-mail"
           },
           "name": "email",
-          "type": "string",
+          "type": "email",
           "unique": true
         },
         {
@@ -197,7 +226,16 @@ export const schema: AppSchema = {
             "fr": "Téléphone"
           },
           "name": "telephone",
-          "type": "string"
+          "type": "phone"
+        },
+        {
+          "label": {
+            "en": "Photo",
+            "fr": "Photo"
+          },
+          "max_size": 2,
+          "name": "photo",
+          "type": "image"
         },
         {
           "label": {
@@ -339,13 +377,14 @@ export const schema: AppSchema = {
           "virtual": true
         },
         {
+          "currency": "EUR",
           "label": {
             "en": "Amount",
             "fr": "Montant HT"
           },
           "name": "montant",
           "required": true,
-          "type": "decimal"
+          "type": "money"
         },
         {
           "default": 50,
@@ -358,21 +397,23 @@ export const schema: AppSchema = {
         },
         {
           "computed": true,
+          "currency": "EUR",
           "label": {
             "en": "Weighted amount",
             "fr": "Montant pondéré"
           },
           "name": "montant_pondere",
-          "type": "decimal"
+          "type": "money"
         },
         {
           "computed": true,
+          "currency": "EUR",
           "label": {
             "en": "Amount incl. VAT",
             "fr": "Montant TTC"
           },
           "name": "montant_ttc",
-          "type": "decimal"
+          "type": "money"
         },
         {
           "default": "prospect",
@@ -416,6 +457,20 @@ export const schema: AppSchema = {
           "target": "tag",
           "type": "reference_list",
           "virtual": true
+        },
+        {
+          "accept": [
+            ".pdf",
+            ".docx",
+            ".odt"
+          ],
+          "label": {
+            "en": "Quote",
+            "fr": "Devis"
+          },
+          "max_size": 5,
+          "name": "devis",
+          "type": "file"
         },
         {
           "hidden": true,
@@ -562,7 +617,7 @@ export const schema: AppSchema = {
             "fr": "Compte rendu"
           },
           "name": "compte_rendu",
-          "type": "text"
+          "type": "markdown"
         }
       ],
       "label": {
@@ -631,13 +686,13 @@ export const schema: AppSchema = {
           "unique": true
         },
         {
-          "default": "#607D8B",
+          "default": "#607d8b",
           "label": {
             "en": "Color",
             "fr": "Couleur"
           },
           "name": "couleur",
-          "type": "string"
+          "type": "color"
         },
         {
           "computed": true,

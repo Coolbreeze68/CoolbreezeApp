@@ -26,6 +26,8 @@ import { paths } from '../paths';
 import type { ColumnSchema, TableSchema } from '../schema';
 import { allows, findTable } from '../schema';
 import { jsonToIds } from '../values';
+import { isForgeFile } from '../api/file';
+import { ColorValue, FileValue, ImageValue, LinkValue, MarkdownValue, RatingValue } from './models';
 
 /** Message d'une erreur, lisible par l'utilisateur. */
 export function useErrorMessage() {
@@ -237,6 +239,26 @@ export function ValueView({
           {String(value)}
         </Text>
       );
+    case 'color':
+      return <ColorValue hex={String(value)} />;
+    case 'email':
+    case 'url':
+    case 'phone':
+      return links ? <LinkValue type={column.type} value={String(value)} /> : <>{String(value)}</>;
+    case 'rating':
+      return <RatingValue value={Number(value)} max={column.max ?? 5} size={links ? 'md' : 'xs'} />;
+    case 'markdown':
+      return links ? (
+        <MarkdownValue text={String(value)} />
+      ) : (
+        <Text size="sm" lineClamp={1}>
+          {String(value)}
+        </Text>
+      );
+    case 'image':
+      return isForgeFile(value) ? <ImageValue file={value} size={links ? 160 : 32} zoom={links} /> : null;
+    case 'file':
+      return isForgeFile(value) ? <FileValue file={value} link={links} /> : null;
     default:
       return <>{format.format(table, column, value)}</>;
   }

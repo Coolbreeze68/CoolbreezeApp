@@ -16,11 +16,14 @@
         { "name": "secteur", "type": "enum", "values": ["industrie", "services", "commerce", "public"],
           "label": { "fr": "Secteur", "en": "Industry" } },
         { "name": "ville", "type": "string", "label": { "fr": "Ville", "en": "City" } },
-        { "name": "site_web", "type": "string", "label": { "fr": "Site web", "en": "Website" } },
-        { "name": "chiffre_affaires", "type": "decimal", "label": { "fr": "Chiffre d'affaires", "en": "Revenue" } },
-        { "name": "pipeline", "type": "decimal", "formula": "SUM(opportunites.montant)", "persist": true,
+        { "name": "site_web", "type": "url", "label": { "fr": "Site web", "en": "Website" } },
+        { "name": "logo", "type": "image", "max_size": 2, "label": { "fr": "Logo", "en": "Logo" } },
+        { "name": "satisfaction", "type": "rating", "label": { "fr": "Satisfaction", "en": "Satisfaction" } },
+        { "name": "chiffre_affaires", "type": "money", "label": { "fr": "Chiffre d'affaires", "en": "Revenue" } },
+        { "name": "presentation", "type": "markdown", "label": { "fr": "Présentation", "en": "Overview" } },
+        { "name": "pipeline", "type": "money", "formula": "SUM(opportunites.montant)", "persist": true,
           "label": { "fr": "Pipeline", "en": "Pipeline" } },
-        { "name": "pipeline_pondere", "type": "decimal", "formula": "SUM(opportunites.montant_pondere)",
+        { "name": "pipeline_pondere", "type": "money", "formula": "SUM(opportunites.montant_pondere)",
           "label": { "fr": "Pipeline pondéré", "en": "Weighted pipeline" } },
         { "name": "nb_contacts", "type": "integer", "formula": "COUNT(contacts)",
           "label": { "fr": "Contacts", "en": "Contacts" } }
@@ -40,8 +43,9 @@
       "columns": [
         { "name": "prenom", "type": "string", "title_field": true, "label": { "fr": "Prénom", "en": "First name" } },
         { "name": "nom", "type": "string", "required": true, "title_field": true, "label": { "fr": "Nom", "en": "Last name" } },
-        { "name": "email", "type": "string", "unique": true, "label": { "fr": "E-mail", "en": "Email" } },
-        { "name": "telephone", "type": "string", "label": { "fr": "Téléphone", "en": "Phone" } },
+        { "name": "email", "type": "email", "unique": true, "label": { "fr": "E-mail", "en": "Email" } },
+        { "name": "telephone", "type": "phone", "label": { "fr": "Téléphone", "en": "Phone" } },
+        { "name": "photo", "type": "image", "max_size": 2, "label": { "fr": "Photo", "en": "Photo" } },
         { "name": "poste", "type": "string", "label": { "fr": "Poste", "en": "Job title" } },
         { "name": "entreprise", "type": "reference", "target": "entreprise", "inverse": "contacts",
           "label": { "fr": "Entreprise", "en": "Company" } },
@@ -65,11 +69,11 @@
         { "name": "contact", "type": "reference", "target": "contact", "inverse": "opportunites",
           "label": { "fr": "Contact principal", "en": "Main contact" } },
         { "name": "secteur", "type": "lookup", "path": "entreprise.secteur", "label": { "fr": "Secteur", "en": "Industry" } },
-        { "name": "montant", "type": "decimal", "required": true, "label": { "fr": "Montant HT", "en": "Amount" } },
+        { "name": "montant", "type": "money", "required": true, "label": { "fr": "Montant HT", "en": "Amount" } },
         { "name": "probabilite", "type": "integer", "default": 50, "label": { "fr": "Probabilité (%)", "en": "Probability (%)" } },
-        { "name": "montant_pondere", "type": "decimal", "formula": "montant * probabilite / 100", "persist": true,
+        { "name": "montant_pondere", "type": "money", "formula": "montant * probabilite / 100", "persist": true,
           "label": { "fr": "Montant pondéré", "en": "Weighted amount" } },
-        { "name": "montant_ttc", "type": "decimal", "formula": "ROUND(montant * (1 + $param.tva / 100), 2)", "persist": true,
+        { "name": "montant_ttc", "type": "money", "formula": "ROUND(montant * (1 + $param.tva / 100), 2)", "persist": true,
           "label": { "fr": "Montant TTC", "en": "Amount incl. VAT" } },
         { "name": "etape", "type": "enum", "values": ["prospect", "proposition", "gagne", "perdu"], "default": "prospect",
           "label": { "fr": "Étape", "en": "Stage" } },
@@ -78,6 +82,8 @@
           "label": { "fr": "Jours restants", "en": "Days left" } },
         { "name": "tags", "type": "reference_list", "target": "tag", "inverse": "opportunites",
           "label": { "fr": "Étiquettes", "en": "Tags" } },
+        { "name": "devis", "type": "file", "accept": [".pdf", ".docx", ".odt"], "max_size": 5,
+          "label": { "fr": "Devis", "en": "Quote" } },
         { "name": "notes_internes", "type": "text", "hidden": true, "label": { "fr": "Notes internes", "en": "Internal notes" } }
       ],
       "views": {
@@ -105,7 +111,7 @@
         { "name": "contact", "type": "reference", "target": "contact", "inverse": "activites",
           "label": { "fr": "Contact", "en": "Contact" } },
         { "name": "terminee", "type": "boolean", "default": false, "label": { "fr": "Terminée", "en": "Done" } },
-        { "name": "compte_rendu", "type": "text", "label": { "fr": "Compte rendu", "en": "Report" } }
+        { "name": "compte_rendu", "type": "markdown", "label": { "fr": "Compte rendu", "en": "Report" } }
       ],
       "views": {
         "calendar": { "start": "debut", "duration": "duree" },
@@ -123,7 +129,7 @@
       "label": { "fr": "Étiquette", "en": "Tag" },
       "columns": [
         { "name": "nom", "type": "string", "required": true, "unique": true, "title_field": true, "label": { "fr": "Nom", "en": "Name" } },
-        { "name": "couleur", "type": "string", "default": "#607D8B", "label": { "fr": "Couleur", "en": "Color" } },
+        { "name": "couleur", "type": "color", "default": "#607d8b", "label": { "fr": "Couleur", "en": "Color" } },
         { "name": "nb_opportunites", "type": "integer", "formula": "COUNT(opportunites)",
           "label": { "fr": "Opportunités", "en": "Opportunities" } }
       ],

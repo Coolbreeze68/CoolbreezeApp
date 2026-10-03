@@ -83,6 +83,7 @@ fn read(row: &QueryResult, column: &str, ty: ColumnType) -> Result<Value, Error>
             .try_get::<Option<DateTimeUtc>>("", column)?
             .map_or(Value::Null, Value::DateTime),
         ColumnType::ReferenceList | ColumnType::Lookup => Value::Null,
+        model => read(row, column, model.base())?,
     })
 }
 
@@ -135,8 +136,12 @@ impl<'a, C: ConnectionTrait> Graph<'a, C> {
             .await?
             .into_iter()
             .map(|(name, (ty, json))| {
-                let value = forge_schema::value::from_json(ty, None, &json)
-                    .map_or(Value::Null, super::typed_to_value);
+                let value = forge_schema::value::from_json(
+                    ty,
+                    forge_schema::value::Domain::default(),
+                    &json,
+                )
+                .map_or(Value::Null, super::typed_to_value);
                 (name, value)
             })
             .collect();

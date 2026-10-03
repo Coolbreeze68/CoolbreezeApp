@@ -42,7 +42,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --home-dir /data app \
- && mkdir /data && chown app /data
+ && mkdir -p /data/uploads && chown -R app /data
 COPY --from=api /usr/local/bin/mini_crm /usr/local/bin/mini_crm
 COPY --from=web /src/web/dist /srv/web
 USER app
@@ -50,6 +50,7 @@ WORKDIR /data
 VOLUME /data
 ENV FORGE_ADDR=0.0.0.0:8080 \
     FORGE_STATIC_DIR=/srv/web \
+    FORGE_UPLOAD_DIR=/data/uploads \
     FORGE_LOG_FORMAT=json \
     DATABASE_URL=sqlite:///data/data.db?mode=rwc
 EXPOSE 8080

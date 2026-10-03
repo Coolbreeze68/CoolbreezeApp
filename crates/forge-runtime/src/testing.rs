@@ -24,7 +24,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
 pub use axum::http::{HeaderMap, Method, StatusCode};
-use forge_schema::spec::{ColumnType, Table};
+use forge_schema::spec::{Column, ColumnType, Table};
 use forge_schema::value::{self, TypedValue};
 use forge_schema::{Model, graphql};
 use http_body_util::BodyExt;
@@ -37,7 +37,49 @@ use tower::ServiceExt;
 use crate::app::App;
 use crate::auth::{AuthConfig, InitialAdmin};
 use crate::columns;
+use crate::files::Storage;
 use forge_schema::spec::Action;
+
+/// Image PNG de 1 × 1 pixel, pour les colonnes `image`.
+pub const TEST_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0,
+    0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99, 0x3D, 0x1D, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+/// Stockage des fichiers en mémoire, propre à chaque client de test.
+#[derive(Debug, Default)]
+pub struct MemoryStorage(std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>);
+
+impl MemoryStorage {
+    fn files(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Vec<u8>>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl Storage for MemoryStorage {
+    async fn put(&self, id: &str, content: &[u8]) -> std::io::Result<()> {
+        self.files().insert(id.to_owned(), content.to_vec());
+        Ok(())
+    }
+
+    async fn get(&self, id: &str) -> std::io::Result<Vec<u8>> {
+        self.files()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| std::io::ErrorKind::NotFound.into())
+    }
+
+    async fn delete(&self, id: &str) -> std::io::Result<()> {
+        self.files().remove(id);
+        Ok(())
+    }
+}
 
 /// Administrateur créé dans la base de test.
 pub const ADMIN_EMAIL: &str = "admin@test.local";
@@ -162,7 +204,16 @@ pub async fn check_rules(app: App, db: TestDatabase) {
             if grant == Grant::Conditional {
                 continue;
             }
-            let sample = checker.sample(&model, table, 0).await;
+            let mut sample = checker.sample(&model, table, 0).await;
+            // Un fichier ne se rattache que par celui qui l'a téléversé.
+            for column in table.columns.iter().filter(|c| c.ty.is_file()) {
+                if grant == Grant::All {
+                    let id = upload_as(&user, table, column).await;
+                    sample.insert(column.name.clone(), json!(id));
+                } else {
+                    sample.remove(&column.name);
+                }
+            }
             let (status, body) = user
                 .request(Method::POST, &collection, Some(Value::Object(sample)))
                 .await;
@@ -224,7 +275,7 @@ impl TestClient {
             email: ADMIN_EMAIL.into(),
             password: PASSWORD.into(),
         });
-        let router = test_cache(app)
+        let router = test_cache(app.storage(MemoryStorage::default()))
             .await
             .into_router(db.connection, auth)
             .await
@@ -313,6 +364,29 @@ impl TestClient {
             .send(method, uri, content_type, Body::from(body.to_owned()))
             .await;
         (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Téléverse un fichier pour la colonne `table.column` ; retourne sa
+    /// description (dont l'`id`, à écrire dans la colonne).
+    ///
+    /// # Panics
+    ///
+    /// Si la requête ne peut pas être traitée.
+    pub async fn upload(
+        &self,
+        (table, column): (&str, &str),
+        name: &str,
+        content_type: &str,
+        content: Vec<u8>,
+    ) -> (StatusCode, Value) {
+        let uri = format!("/api/files?table={table}&column={column}&name={name}");
+        let (status, _, bytes) = self
+            .send(Method::POST, &uri, content_type, Body::from(content))
+            .await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     /// Envoie une requête sans corps ; retourne les en-têtes et le corps de la réponse.
@@ -424,6 +498,15 @@ impl Checker {
                     ColumnType::Datetime => json!(format!("2026-01-15T10:{:02}:00Z", n % 60)),
                     ColumnType::Duration => json!(60 * n),
                     ColumnType::Enum => json!(column.values.as_ref().and_then(|v| v.first())),
+                    ColumnType::Color => json!(format!("#{:06x}", n * 4099)),
+                    ColumnType::Email => json!(format!("test{n}@exemple.fr")),
+                    ColumnType::Url => json!(format!("https://exemple.fr/{n}")),
+                    ColumnType::Phone => json!(format!("+33 1 00 00 {:02}", n % 100)),
+                    ColumnType::Markdown => json!(format!("**texte** {n}")),
+                    ColumnType::Rating => json!(n % i64::from(column.rating_max() + 1)),
+                    ColumnType::Percent => json!(format!("0.{:02}", n % 100)),
+                    ColumnType::Money => json!(format!("{n}.50")),
+                    ColumnType::File | ColumnType::Image => json!(self.upload(table, column).await),
                     ColumnType::Reference if column.required => {
                         json!(
                             self.create(model, target(model, table, &column.name), depth + 1)
@@ -443,6 +526,11 @@ impl Checker {
             }
             body
         })
+    }
+
+    /// Téléverse un fichier de test pour `column` ; retourne son identifiant.
+    async fn upload(&self, table: &Table, column: &Column) -> String {
+        upload_as(&self.client, table, column).await
     }
 
     /// Crée un enregistrement de test et retourne son identifiant.
@@ -678,6 +766,42 @@ fn target<'a>(model: &'a Model, table: &Table, column: &str) -> &'a Table {
     model.table(&relation.target).expect("table cible")
 }
 
+/// Fichier de test conforme à `column` : nom, type et contenu.
+fn test_file(column: &Column) -> (String, String, Vec<u8>) {
+    if column.ty == ColumnType::Image {
+        return ("test.png".into(), "image/png".into(), TEST_PNG.to_vec());
+    }
+    // Conforme au premier type accepté.
+    let accept = column.accept.as_ref().and_then(|a| a.first());
+    let name = match accept {
+        Some(ext) if ext.starts_with('.') => format!("test{ext}"),
+        _ => "test.bin".to_owned(),
+    };
+    let content_type = match accept {
+        Some(pattern) if pattern.contains('/') => pattern.replace('*', "x-test"),
+        _ => "application/octet-stream".to_owned(),
+    };
+    (name, content_type, b"contenu de test".to_vec())
+}
+
+/// Téléverse, au nom de `client`, un fichier de test pour `column`.
+async fn upload_as(client: &TestClient, table: &Table, column: &Column) -> String {
+    let (name, content_type, content) = test_file(column);
+    let (status, file) = client
+        .upload((&table.name, &column.name), &name, &content_type, content)
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{} : téléversement : {file}",
+        table.name
+    );
+    file["id"]
+        .as_str()
+        .expect("identifiant de fichier")
+        .to_owned()
+}
+
 /// Compare les valeurs envoyées à celles renvoyées, au sens du type de colonne
 /// (`"12.25"` et `12.2500` sont égaux, comme deux écritures d'une même date-heure).
 fn assert_matches(table: &Table, sent: &Map<String, Value>, record: &Value, step: &str) {
@@ -686,9 +810,12 @@ fn assert_matches(table: &Table, sent: &Map<String, Value>, record: &Value, step
         let actual = &record[key];
         let equal = if column.ty == ColumnType::ReferenceList {
             expected == actual
+        } else if column.ty.is_file() {
+            // Un fichier s'écrit par son identifiant et se lit décrit.
+            *expected == actual["id"]
         } else {
             let typed = |v: &Value| -> TypedValue {
-                value::from_json(column.ty, None, v)
+                value::from_json(column.ty, value::Domain::of(column), v)
                     .unwrap_or_else(|err| panic!("{} : {step} : `{key}` = {v} : {err}", table.name))
             };
             typed(expected) == typed(actual)

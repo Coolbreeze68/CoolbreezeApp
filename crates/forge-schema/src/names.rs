@@ -7,19 +7,20 @@
 pub const SYSTEM_COLUMNS: [&str; 4] = ["id", "created_at", "updated_at", "owner"];
 
 /// Tables gérées par forge.
-pub const SYSTEM_TABLES: [&str; 5] = [
+pub const SYSTEM_TABLES: [&str; 6] = [
     "users",
     "roles",
     "user_roles",
     "parameters",
     "refresh_tokens",
+    "forge_files",
 ];
 
 /// Champs de `$user` utilisables dans les conditions de règles.
 pub const USER_FIELDS: [&str; 2] = ["id", "email"];
 
 /// Segments réservés sous `/api/` : aucune table ne peut porter ces noms.
-pub const RESERVED_ROUTES: [&str; 2] = ["auth", "graphql"];
+pub const RESERVED_ROUTES: [&str; 3] = ["auth", "files", "graphql"];
 
 /// Longueur maximale d'un identifiant (limite de Postgres).
 const MAX_LEN: usize = 63;

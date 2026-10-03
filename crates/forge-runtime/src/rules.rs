@@ -168,7 +168,7 @@ impl Context<'_> {
                 path,
             } => {
                 match self.parameters.get(&path[0]).and_then(|(ty, json)| {
-                    value::from_json(*ty, None, json)
+                    value::from_json(*ty, value::Domain::default(), json)
                         .ok()
                         .map(|typed| (*ty, typed))
                 }) {

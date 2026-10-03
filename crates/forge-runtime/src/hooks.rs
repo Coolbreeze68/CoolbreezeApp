@@ -57,26 +57,43 @@ impl<'a> HookContext<'a> {
     }
 }
 
-/// Tables écrites par une requête, à invalider dans le cache après validation.
+/// Effets d'une écriture à appliquer une fois la transaction validée : tables
+/// à invalider dans le cache, fichiers à retirer du stockage.
 #[derive(Debug, Default)]
-pub(crate) struct Written(Mutex<BTreeSet<String>>);
+pub(crate) struct Written {
+    tables: Mutex<BTreeSet<String>>,
+    files: Mutex<Vec<String>>,
+}
 
 impl Written {
     pub(crate) fn add(&self, table: &str) {
-        self.tables().insert(table.to_owned());
+        lock(&self.tables).insert(table.to_owned());
     }
 
     pub(crate) fn extend(&self, tables: BTreeSet<String>) {
-        self.tables().extend(tables);
+        lock(&self.tables).extend(tables);
     }
 
-    pub(crate) fn into_tables(self) -> BTreeSet<String> {
-        self.0.into_inner().unwrap_or_else(PoisonError::into_inner)
+    /// Fichier détaché d'un enregistrement (remplacé ou supprimé avec lui).
+    pub(crate) fn remove_file(&self, id: String) {
+        lock(&self.files).push(id);
     }
 
-    fn tables(&self) -> std::sync::MutexGuard<'_, BTreeSet<String>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    pub(crate) fn into_parts(self) -> (BTreeSet<String>, Vec<String>) {
+        let tables = self
+            .tables
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        let files = self
+            .files
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        (tables, files)
     }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Hooks d'une table. Chaque méthode a une implémentation par défaut qui ne fait

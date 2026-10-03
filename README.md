@@ -27,6 +27,7 @@ n'est jamais écrasé par une régénération.
 | 7 | Application Flutter (web et mobile) : listes, fiches, formulaires, calendrier, statistiques, CSV, comptes ; modèles Dart typés | ✅ |
 | 8 | Image Docker (API et app web), docker-compose (PostgreSQL, Redis en option), GitHub Actions du projet généré | ✅ |
 | 9 | Choix de l'interface (`app.frontend` : web React, Flutter ou les deux), identité visuelle « Material moderne » commune, accueil en tableau de bord | ✅ |
+| 10 | Modèles de champ (couleur, e-mail, URL, téléphone, Markdown, note, pourcentage, montant, fichier, image), fichiers téléversés (stockage disque, URL signées), création d'une référence depuis son champ | ✅ |
 
 ## Installation
 
@@ -147,6 +148,7 @@ le document OpenAPI sur `/openapi.json`, et l'éditeur GraphQL (GraphiQL) sur
 | `FORGE_CACHE_TTL` | `60` | Durée de vie des lectures en cache, en secondes ; `0` désactive le cache |
 | `FORGE_CACHE_URL` | — | Cache Redis partagé (`redis://hôte:6379`), feature `redis` ; sinon cache en mémoire |
 | `FORGE_CORS_ORIGINS` | — | Origines autorisées à appeler l'API depuis un navigateur (virgules ; `*` pour toutes) |
+| `FORGE_UPLOAD_DIR` | `uploads` | Dossier des fichiers téléversés (colonnes `file` et `image`) |
 | `FORGE_STATIC_DIR` | — | Application web servie par l'API (`web/dist` après `npm run build`, ou `app/build/web` après `flutter build web`) |
 | `RUST_LOG` | `info,sqlx=warn` | Niveau des journaux |
 | `FORGE_LOG_FORMAT` | `text` (debug), `json` (release) | Format des journaux |
@@ -345,7 +347,14 @@ thème clair ou sombre :
 - **formulaires** de création et de modification : un champ par type (dates,
   durées `h:mm`, énumérations, références avec recherche, listes de références),
   valeurs par défaut, erreurs de validation du serveur sous chaque champ ; seules
-  les colonnes modifiées sont envoyées ;
+  les colonnes modifiées sont envoyées. Une référence se crée aussi depuis son
+  champ (bouton « + ») : formulaire de la table cible, puis retour au formulaire
+  en cours avec l'enregistrement choisi ;
+- **modèles de champ** : sélecteur de couleur (nuancier et code hexadécimal),
+  liens cliquables (e-mail, site, téléphone), étoiles, pourcentage et montant
+  saisis et affichés dans la langue de l'utilisateur, Markdown avec aperçu,
+  fichiers et images envoyés dès leur choix (miniatures dans les listes,
+  agrandissement au clic) ;
 - **calendrier** (`views.calendar`) : mois et agenda du jour, création à une date ;
 - **statistiques** (`views.stats`) : totaux, moyennes, extrêmes et barres par groupe
   (couleur de chaque valeur, ordre de déclaration), sur les enregistrements filtrés ;
@@ -366,6 +375,10 @@ le serveur. Les colonnes `hidden` n'apparaissent pas dans l'interface.
 | ![Liste en thème sombre](docs/images/web-sombre.png) | ![Tableau de bord Flutter](docs/images/flutter-accueil.png) |
 | **Téléphone (web)** | **Téléphone (Flutter, thème sombre)** |
 | ![Liste sur téléphone](docs/images/web-mobile.png) | ![Accueil Flutter sur téléphone](docs/images/flutter-mobile.png) |
+| **Modèles de champ : fiche (web)** | **Modèles de champ : formulaire (web)** |
+| ![Logo, site, note, montant, Markdown](docs/images/web-modeles-fiche.png) | ![Image, note, montant, aperçu Markdown](docs/images/web-modeles-formulaire.png) |
+| **Création d'une référence depuis son champ (web)** | **Modèles de champ : fiche (Flutter)** |
+| ![Nouvelle entreprise depuis une opportunité](docs/images/web-creation-reference.png) | ![Fiche entreprise Flutter](docs/images/flutter-modeles-fiche.png) |
 
 #### Application web (React)
 
@@ -492,7 +505,7 @@ docker compose --profile redis up --build   # avec le cache Redis (voir .env.exa
 | Fichier | Contenu |
 |---|---|
 | `Dockerfile` | trois étapes : l'interface web (`npm run build` sur `node:22-slim` si `web` est dans `app.frontend`, sinon `flutter build web`, SDK épinglé par `FLUTTER_VERSION`), `cargo build --release` (features en option : `CARGO_FEATURES`), image finale Debian slim, utilisateur non root, données dans `/data` |
-| `docker-compose.yml` | l'application, PostgreSQL 17 (volume `db`, démarrage attendu), Redis dans le profil `redis` |
+| `docker-compose.yml` | l'application (fichiers téléversés dans le volume `uploads`), PostgreSQL 17 (volume `db`, démarrage attendu), Redis dans le profil `redis` |
 | `.env.example` | secrets et réglages ; `.env` n'est ni versionné ni copié dans l'image |
 
 Sans docker-compose, l'image démarre seule sur SQLite (`/data/data.db`) :
@@ -647,7 +660,36 @@ vide vaut `null`, une `reference_list` s'écrit `1,2,3`.
 ```
 
 En cas de succès : `{ "created": 12, "updated": 3 }`. Le corps est limité à 2 Mo
-(limite par défaut d'axum).
+(limite par défaut d'axum). Un fichier (`file`, `image`) s'exporte par son
+identifiant, qui se réimporte tel quel.
+
+### Fichiers et images
+
+Une colonne `file` ou `image` reçoit un fichier téléversé au préalable :
+
+```bash
+curl -X POST "localhost:8080/api/files?table=entreprise&column=logo&name=logo.png" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: image/png" --data-binary @logo.png
+# { "id": "1d82c277-…", "name": "logo.png", "size": 2048, "content_type": "image/png", "url": "/api/files/1d82c277-…?expires=…&signature=…" }
+curl -X PATCH localhost:8080/api/entreprise/1 -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"logo": "1d82c277-…"}'
+```
+
+- Le téléversement exige le droit de créer ou de modifier dans la table ; la
+  taille (`max_size`, 10 Mo par défaut) et le type (`accept`) sont vérifiés. Une
+  image est reconnue à son contenu (PNG, JPEG, GIF, WebP), jamais à l'en-tête
+  annoncé : un SVG ou du HTML déguisé est refusé.
+- Écrire l'`id` dans la colonne rattache le fichier à l'enregistrement ; seul
+  l'auteur du téléversement (ou un administrateur) peut le faire, une seule fois.
+  Un fichier jamais rattaché est supprimé au bout d'un jour.
+- À la lecture, la colonne contient la description du fichier (ci-dessus) ; `url`
+  est un lien signé et temporaire (une à deux heures), utilisable sans jeton (balise
+  `<img>`, téléchargement) : il hérite des règles de lecture de la table.
+- Remplacé, vidé, ou supprimé avec son enregistrement, le fichier est retiré du
+  stockage une fois la transaction validée.
+- Stockage : dossier `FORGE_UPLOAD_DIR` (`uploads` par défaut, volume `uploads` en
+  Docker), derrière le trait `Storage` (`App::storage`) pour brancher un autre
+  stockage (S3…).
 
 ## Observabilité et cache
 
@@ -822,7 +864,7 @@ Exemple complet : [`examples/crm/forge.json`](examples/crm/forge.json).
 
 | Clé | Description |
 |---|---|
-| `app` | `name` (identifiant), `default_locale`, `locales` (ex. `["fr", "en"]`), `frontend` (`"flutter"` par défaut, `"web"`, ou `["flutter", "web"]`). |
+| `app` | `name` (identifiant), `default_locale`, `locales` (ex. `["fr", "en"]`), `frontend` (`"flutter"` par défaut, `"web"`, ou `["flutter", "web"]`), `currency` (devise par défaut des colonnes `money`, code ISO 4217, `EUR` par défaut). |
 | `roles` | Rôles utilisateurs. `admin` est obligatoire. |
 | `parameters` | Paramètres globaux typés (`name`, `type`, `default`, `label`), lisibles dans les formules via `$param.nom`. |
 | `functions` | Fonctions de formule implémentées en Rust : `name`, `args` et `returns` (`number`, `text`, `boolean`, `date`, `datetime`, `any`), `volatile` (résultat non déterministe : interdite dans `persist`). |
@@ -858,6 +900,29 @@ noms réservés par l'API : `auth`, `graphql`.
 | `reference` | Relation N→1 | `target`, `inverse` |
 | `reference_list` | Relation N↔N (table de jointure) | `target`, `inverse` |
 | `lookup` | Valeur lue via un chemin de références, lecture seule | `path` (ex. `entreprise.secteur`) |
+
+Les **modèles de champ** reposent sur un type de base (stockage, filtres, type
+dans les formules), avec une validation et une présentation propres :
+
+| Modèle | Base | Valeur et validation | Interface | Options propres |
+|---|---|---|---|---|
+| `color` | `string` | `#rrggbb` (mis en minuscules) | sélecteur de couleur, pastille | |
+| `email` | `string` | adresse e-mail | lien `mailto:` | |
+| `url` | `string` | adresse `http://` ou `https://` | lien ouvert dans un nouvel onglet | |
+| `phone` | `string` | 6 à 15 chiffres, `+`, espaces, `.`, `-`, parenthèses | lien `tel:` | |
+| `markdown` | `text` | texte Markdown | éditeur avec aperçu, rendu dans la fiche | |
+| `rating` | `integer` | note de 0 à `max` | étoiles | `max` (1 à 10, 5 par défaut) |
+| `percent` | `decimal` | proportion : `0.25` pour 25 % | saisie et affichage en % | |
+| `money` | `decimal` | montant | saisie et affichage dans la devise | `currency` (ISO 4217, défaut `app.currency`) |
+| `file` | — | fichier téléversé (voir [Fichiers](#fichiers-et-images)) | choix, lien de téléchargement | `max_size` (Mo, 10 par défaut), `accept` (`application/pdf`, `image/*`, `.docx`…) |
+| `image` | — | image PNG, JPEG, GIF ou WebP | miniature, agrandissement | `max_size` |
+
+Un modèle numérique ou texte peut être calculé (`"type": "money", "formula": …`),
+servir de paramètre, de valeur par défaut ou de vue `stats` (`rating`, `percent`,
+`money`) ; `rating` peut aussi regrouper une vue `stats`. Changer une colonne
+`string` en `email` (ou `decimal` en `money`…) ne crée pas de migration : le
+stockage est le même, la validation s'applique aux écritures suivantes. Les
+fichiers ne sont ni uniques, ni intitulés, ni calculés, ni triables.
 
 `inverse` nomme la relation vue depuis la table cible (par défaut : le nom de la
 table source). Il sert dans les agrégats : `SUM(opportunites.montant)`.
@@ -926,7 +991,8 @@ crates/
 ├── forge-formula/  langage de formules : lexer, parser, AST, typage, évaluation, registre de fonctions
 ├── forge-codegen/  génération : structure de stockage, diff et migrations, templates, écriture idempotente
 ├── forge-runtime/  logique des apps générées : CRUD générique (REST, GraphQL, CSV), OpenAPI, filtres,
-│                   agrégats, calcul des formules, auth, hooks, cache, observabilité, migrations, CLI
+│                   agrégats, calcul des formules, auth, hooks, fichiers, cache, observabilité,
+│                   migrations, CLI
 └── forge-cli/      binaire `forge`
 packages/
 ├── forge_web/      logique de l'app web (React, TypeScript, Mantine) : client de l'API, tableau

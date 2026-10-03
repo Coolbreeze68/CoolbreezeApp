@@ -17,7 +17,23 @@ export type ColumnType =
   | 'duration'
   | 'enum'
   | 'reference'
-  | 'reference_list';
+  | 'reference_list'
+  /** Couleur `#rrggbb`. */
+  | 'color'
+  | 'email'
+  | 'url'
+  | 'phone'
+  /** Texte mis en forme en Markdown. */
+  | 'markdown'
+  /** Note entière de 0 à `max`. */
+  | 'rating'
+  /** Proportion (`"0.25"` pour 25 %), en texte. */
+  | 'percent'
+  /** Montant dans la devise `currency`, en texte. */
+  | 'money'
+  /** Fichier téléversé : `ForgeFile` en lecture, son identifiant en écriture. */
+  | 'file'
+  | 'image';
 
 /** Opération soumise aux règles d'autorisation. */
 export type Operation = 'read' | 'create' | 'update' | 'delete';
@@ -45,6 +61,14 @@ export interface ColumnSchema {
   target?: string;
   /** Valeurs d'une énumération. */
   values?: string[];
+  /** Note maximale d'une colonne `rating`. */
+  max?: number;
+  /** Devise d'une colonne `money` (code ISO 4217). */
+  currency?: string;
+  /** Taille maximale d'un fichier, en Mo. */
+  max_size?: number;
+  /** Types acceptés par une colonne `file` : MIME (`image/*`) ou extensions (`.pdf`). */
+  accept?: string[];
 }
 
 export interface CalendarView {
@@ -93,7 +117,16 @@ export interface AppSchema {
 export const ADMIN_ROLE = 'admin';
 
 export const isNumeric = (type: ColumnType) =>
-  type === 'integer' || type === 'decimal' || type === 'duration';
+  ['integer', 'decimal', 'duration', 'rating', 'percent', 'money'].includes(type);
+
+/** Valeur décimale, transmise en texte. */
+export const isDecimal = (type: ColumnType) => type === 'decimal' || type === 'percent' || type === 'money';
+
+export const isFile = (type: ColumnType) => type === 'file' || type === 'image';
+
+/** Texte libre : recherche et filtre « contient ». */
+export const isText = (type: ColumnType) =>
+  ['string', 'text', 'email', 'url', 'phone', 'markdown'].includes(type);
 
 export const findTable = (schema: AppSchema, name: string) =>
   schema.tables.find((t) => t.name === name);
@@ -115,7 +148,7 @@ export const titleColumns = (table: TableSchema) =>
 /** La recherche (`q`) porte sur les textes stockés. */
 export const isSearchable = (table: TableSchema) =>
   table.columns.some(
-    (c) => !c.virtual && (c.type === 'string' || c.type === 'text'),
+    (c) => !c.virtual && isText(c.type),
   );
 
 /** Un rôle de l'utilisateur peut tenter `operation` (`admin` peut tout). */

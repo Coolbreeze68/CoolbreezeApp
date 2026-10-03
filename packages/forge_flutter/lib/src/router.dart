@@ -36,6 +36,14 @@ abstract final class Paths {
     queryParameters: initial.isEmpty ? null : initial,
   ).toString();
 
+  /// Création qui revient avec l'identifiant créé au lieu d'ouvrir la fiche
+  /// (depuis un champ de référence).
+  static String pick(String table) => create(table, {pickParameter: '1'});
+
+  /// Paramètre d'URL du mode « choix » ; une colonne ne peut pas le porter
+  /// (un nom de colonne commence par une lettre).
+  static const pickParameter = '_pick';
+
   static String user(int id) => '$users/$id';
   static String page(String path) => '/pages/$path';
 }
@@ -77,12 +85,15 @@ GoRouter buildRouter(AppSchema schema, ForgeClient client) => GoRouter(
           routes: [
             GoRoute(
               path: 'new',
-              builder: (context, state) => _withTable(
-                context,
-                state,
-                (table) =>
-                    FormPage(table: table, initial: state.uri.queryParameters),
-              ),
+              builder: (context, state) => _withTable(context, state, (table) {
+                final parameters = {...state.uri.queryParameters};
+                final pick = parameters.remove(Paths.pickParameter) != null;
+                return FormPage(
+                  table: table,
+                  initial: parameters,
+                  returnsId: pick,
+                );
+              }),
             ),
             GoRoute(
               path: ':id',

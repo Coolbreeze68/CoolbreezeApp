@@ -10,8 +10,12 @@ import 'package:{{ package_name }}/generated/models.dart';
 /// Colonnes modifiables de `table`, avec leur valeur dans `json`.
 Map<String, dynamic> writable(String table, Map<String, dynamic> json) => {
   for (final column in schema.table(table)!.columns)
-    if (column.writable) column.name: json[column.name],
+    if (column.writable) column.name: written(column, json[column.name]),
 };
+
+/// Valeur envoyée à l'API : un fichier s'écrit par son identifiant.
+Object? written(ColumnSchema column, Object? value) =>
+    column.type.isFile && value is Map ? value['id'] : value;
 
 void main() {
   testWidgets('chaque table : liste et formulaire de création', (tester) async {

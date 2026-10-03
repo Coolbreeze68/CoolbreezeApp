@@ -8,7 +8,8 @@
 //! paramètres) : une écriture rend donc inaccessibles toutes les entrées
 //! concernées, sans les parcourir. Les entrées périmées expirent avec leur durée
 //! de vie. La clé contient aussi le périmètre de l'utilisateur (règles) et, pour
-//! une table à formules calculées à la lecture, la date du jour (`TODAY`).
+//! une table à formules calculées à la lecture, la date du jour (`TODAY`), et
+//! pour une table à fichiers, la fenêtre de validité de leurs URL signées.
 //!
 //! Les écritures faites hors de forge (hooks, routes personnalisées) doivent
 //! être signalées : [`crate::HookContext::modified`], [`crate::AppState::invalidate`].
@@ -34,8 +35,8 @@ pub use memory::MemoryCache;
 #[cfg(feature = "redis")]
 pub use redis::RedisCache;
 
-use crate::compute;
 use crate::error::Error;
+use crate::{compute, files};
 
 /// Stockage du cache. Une erreur de stockage ne doit jamais faire échouer une
 /// requête : les implémentations la journalisent et se comportent comme un cache vide.
@@ -67,6 +68,8 @@ pub(crate) struct Dependencies {
 pub(crate) struct Reads {
     store: Arc<dyn Cache>,
     dependencies: BTreeMap<String, Dependencies>,
+    /// Tables dont les lectures portent des URL de fichiers signées.
+    with_files: BTreeSet<String>,
 }
 
 impl Reads {
@@ -76,9 +79,20 @@ impl Reads {
             .iter()
             .map(|t| (t.name.clone(), compute::read_dependencies(model, &t.name)))
             .collect();
+        let with_files = model
+            .tables()
+            .iter()
+            .filter(|t| {
+                t.columns
+                    .iter()
+                    .any(|c| model.resolved(&t.name, c).1.ty.is_file())
+            })
+            .map(|t| t.name.clone())
+            .collect();
         Self {
             store,
             dependencies,
+            with_files,
         }
     }
 
@@ -130,6 +144,10 @@ impl Reads {
         }
         if dependencies.is_some_and(|d| d.daily) {
             hasher.update(chrono::Utc::now().date_naive().to_string().as_bytes());
+        }
+        // Une lecture en cache ne sert que dans sa fenêtre : ses URL restent valides.
+        if self.with_files.contains(table) {
+            hasher.update(files::url_window().to_string().as_bytes());
         }
         Some(format!(
             "{table}:{}",

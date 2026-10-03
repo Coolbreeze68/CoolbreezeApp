@@ -8,6 +8,7 @@ library;
 export 'package:go_router/go_router.dart' show GoRouter, GoRouterHelper;
 
 export 'src/api/client.dart';
+export 'src/api/file.dart';
 export 'src/api/query.dart';
 export 'src/api/store.dart';
 export 'src/api/table_client.dart';
@@ -19,6 +20,15 @@ export 'src/router.dart' show Paths;
 export 'src/palette.dart';
 export 'src/schema.dart';
 export 'src/theme.dart';
+export 'src/ui/field_models.dart'
+    show
+        ColorValue,
+        FileValue,
+        ImageValue,
+        LinkValue,
+        MarkdownValue,
+        RatingStars,
+        createRecordFor;
 export 'src/ui/fields.dart' show InvalidInput, buildField;
 export 'src/ui/record_list.dart' show RecordList;
 export 'src/ui/shell.dart' show ForgeScaffold, TintedIcon;

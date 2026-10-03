@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Alert, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft, IconCheck } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useBlocker, useNavigate, useSearchParams } from 'react-router';
@@ -9,7 +9,7 @@ import { useForge } from '../context';
 import { paths } from '../paths';
 import { editableColumns, type TableSchema } from '../schema';
 import { ErrorView, Loading, useNotify } from './common';
-import { clientError, Field, isEmptyValue, parseInitialValue } from './fields';
+import { clientError, FieldGrid, isEmptyValue, parseInitialValue } from './fields';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
@@ -140,22 +140,16 @@ export function FormPage({ table, id }: { table: TableSchema; id?: number }) {
         </Alert>
       )}
       <Card p="lg">
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-          {columns.map((c) => (
-            <div key={c.name} style={c.type === 'text' || c.type === 'reference_list' ? { gridColumn: '1 / -1' } : undefined}>
-              <Field
-                table={table}
-                column={c}
-                value={values[c.name]}
-                error={(submitted ? clientError(strings, c, values[c.name]) : undefined) ?? serverErrors[c.name]?.join(' ')}
-                onChange={(value) => {
-                  setValues((v) => ({ ...v, [c.name]: value }));
-                  setServerErrors(({ [c.name]: _, ...rest }) => rest);
-                }}
-              />
-            </div>
-          ))}
-        </SimpleGrid>
+        <FieldGrid
+          table={table}
+          columns={columns}
+          values={values}
+          error={(c) => (submitted ? clientError(strings, c, values[c.name]) : undefined) ?? serverErrors[c.name]?.join(' ')}
+          onChange={(name, value) => {
+            setValues((v) => ({ ...v, [name]: value }));
+            setServerErrors(({ [name]: _, ...rest }) => rest);
+          }}
+        />
       </Card>
     </Stack>
   );

@@ -46,7 +46,7 @@ pub(crate) fn typed_to_value(typed: TypedValue) -> Value {
 
 /// Valeur à stocker dans une colonne de type `ty` (arrondie pour les nombres).
 fn value_to_typed(ty: ColumnType, value: Value) -> TypedValue {
-    match (ty, value) {
+    match (ty.base(), value) {
         (ColumnType::Integer | ColumnType::Duration | ColumnType::Reference, Value::Number(n)) => n
             .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
             .to_i64()

@@ -25,6 +25,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 csv = "1"
+hmac = "0.12"
 http-body-util = "0.1"
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 metrics = "0.24"
@@ -58,7 +59,7 @@ sha2 = "0.10"
 tempfile = "3"
 toml = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["cors", "fs", "request-id", "trace", "util"] }
 tracing = "0.1"
