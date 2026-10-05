@@ -65,6 +65,9 @@ PostgreSQL 16 et MySQL 8.4, et construit l'image Docker du CRM.
 | `packages/forge_flutter` | Package Dart. `schema` : `AppSchema`/`TableSchema`/`ColumnSchema` (const, générés). `api/` : `ForgeClient` (session, renouvellement unique sur `401`, `ApiException`), `TableClient<T>`, `ListQuery`/`Filter`, `KeyValueStore` (`SecureStore`, `MemoryStore`). `values` : JSON ↔ Dart, `ValueFormat` (mise en forme par langue, intitulés). `forge` : `Forge.of(context)`, `DataChanges` (rechargement après écriture), `TitleCache` (intitulés de références par lots). `app`/`router` : `ForgeApp`, go_router, `Paths`. `ui/` : pages et champs. `customization` : `ForgeCustomization`. `l10n/strings` : textes fr/en. `testing.dart` : `FakeApi`. `theme`/`palette` : identité visuelle (`ForgeColors`, `forgeTheme`), couleurs des énumérations. `ui/home_page` : tableau de bord. `api/file` : `ForgeFile`. `ui/field_models` : affichage et saisie des modèles de champ, `createRecordFor`. |
 | `packages/forge_web` | Package npm `@forge/web` (React 19, Mantine, react-router), consommé en sources TypeScript. Même découpage que `forge_flutter` : `schema`, `api/` (`ForgeClient`, `TableClient<T>`, `ListQuery`, `BrowserStore`), `values` (`ValueFormat`, `Intl`), `i18n`, `titles` (`TitleCache`), `context` (`useForge`), `hooks` (`useAsync`, `useRecordTitle`), `app` (`ForgeApp`, routes), `ui/` (pages et champs), `customization`, `theme`/`palette`, `testing` (`FakeApi`), `api/file` (`ForgeFile`), `ui/models` (modèles de champ), `ui/CreateRecord` (création d'une référence dans une fenêtre). |
 
+Documentation technique (fonctionnement, schémas, recettes) : `docs/`, à tenir à
+jour avec le code.
+
 Templates : `templates/{backend,flutter,web,infra}/*.j2`, embarqués via
 `include_str!` (liste dans `forge-codegen/src/render.rs`).
 

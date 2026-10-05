@@ -13,6 +13,9 @@ Le code généré est fin : l'essentiel de la logique vit dans des bibliothèque
 communes (`forge-runtime`, `@forge/web`, `forge_flutter`), et le code utilisateur (`custom/`)
 n'est jamais écrasé par une régénération.
 
+Fonctionnement interne et organisation du code : voir la
+[documentation technique](docs/README.md).
+
 ## État d'avancement
 
 | Phase | Contenu | État |
@@ -986,6 +989,8 @@ traduisible en SQL, pour filtrer aussi les listes : uniquement des colonnes stoc
 de la table, des comparaisons et `AND`/`OR`/`NOT`, sans fonctions.
 
 ## Architecture
+
+Détails, schémas et recettes de contribution : [documentation technique](docs/README.md).
 
 ```text
 crates/
